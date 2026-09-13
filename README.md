@@ -62,3 +62,8 @@ Authenticated `/power-status` exposes only cached battery/charging/solar facts.
 This T86P2 API cannot establish continuous mains power: charging can mean solar.
 Until continuous power can be independently verified, retain five-minute checks
 and the SDK battery budget; do not keep a continuous video stream alive.
+
+`GET /clip?seconds=10&format=whatsapp` converts camera HEVC fragments to a
+seekable H.264/AAC MP4 for WhatsApp. Clips remain bounded to 2–20 seconds.
+Conversion uses a private temporary directory that is removed on completion or
+failure. Existing `/clip` callers retain their original recording format.

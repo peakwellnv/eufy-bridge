@@ -6,6 +6,7 @@ import { mkdirSync } from "node:fs";
 import { timingSafeEqual } from "node:crypto";
 import { CameraMedia, connectionDiagnostics } from "./media.js";
 import { transcode } from "./transcode.js";
+import { whatsappVideo } from "./whatsapp-video.js";
 import { SpeechLedger } from "./speech-ledger.js";
 import { installCellularRelay } from "./cellular-relay.js";
 if (["true", "experimental"].includes(process.env.EUFY_CELLULAR_RELAY)) installCellularRelay();
@@ -224,7 +225,10 @@ app.get("/observe", async (req, res) => {
 
 // Bounded MP4 containing video and camera audio when the device delivers it.
 app.get("/clip", async (req, res) => {
-  try { res.type("video/mp4").send(await media.clip(Number(req.query.seconds || 10))); }
+  try {
+    const clip = await media.clip(Number(req.query.seconds || 10));
+    res.type("video/mp4").send(req.query.format === "whatsapp" ? await whatsappVideo(clip) : clip);
+  }
   catch (e) { res.status(e.status || 502).json({ error: e.message }); }
 });
 
