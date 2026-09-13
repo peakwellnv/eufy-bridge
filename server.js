@@ -178,6 +178,32 @@ app.get("/power-status", async (req, res) => {
   } catch (e) { res.status(502).json({ error: "Power status unavailable" }); }
 });
 
+// Reported motion state; changing it does not turn the camera off.
+app.get("/motion-status", async (req, res) => {
+  try {
+    if (!ready) return res.status(503).json({error:"not logged in yet"});
+    const devices=await eufy.getDevices();
+    const dev=devices.find(d=>d.sn===process.env.EUFY_CAMERA_SN);
+    const motion=dev?.motion?.();
+    res.json({checkedAt:new Date().toISOString(), detectionEnabled:motion?.detectionEnabled ?? null,
+      canSetDetection:typeof motion?.setDetection === "function", source:"reported-device-state"});
+  } catch { res.status(502).json({error:"Motion status unavailable"}); }
+});
+app.post("/motion-settings", express.json({limit:"1kb"}), async (req,res)=>{
+  if(typeof req.body?.enabled!=="boolean")return res.status(400).json({error:"enabled must be boolean"});
+  try {
+    const result=await media.exclusive(async()=>{
+      const dev=await eufy.getDevice(process.env.EUFY_CAMERA_SN);
+      const motion=dev.motion?.();
+      if(typeof motion?.setDetection!=="function")throw new Error("unsupported");
+      const before=motion.detectionEnabled ?? null;
+      await motion.setDetection(req.body.enabled);
+      return {requested:req.body.enabled,previous:before,status:"command-sent",verified:false};
+    });
+    res.json(result);
+  } catch {res.status(502).json({error:"Motion setting not confirmed"});}
+});
+
 app.get("/audio-status", async (req, res) => {
   try {
     if (!ready) return res.status(503).json({ error: "not logged in yet" });
