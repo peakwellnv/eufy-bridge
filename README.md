@@ -47,4 +47,4 @@ Utah State Fair 2026 public hours: September 10–20; weekdays noon–10pm, Frid
 
 Speech uses existing OpenAI TTS when configured, otherwise OpenRouter `/api/v1/audio/speech`, default model `hexgrad/kokoro-82m`, voice `af_heart` (configurable through `SAGE_BOOTH_TTS_MODEL`/`SAGE_BOOTH_TTS_VOICE`).
 
-For speech, the bridge makes at most two 25-second attempts to obtain a fresh frame before opening talkback. This retries only camera wakeup, never audio transmission. If both attempts fail, `/speak` returns HTTP 503 with `code: camera_not_ready`, explicitly meaning no speech started. Other uncertain transport failures must not be automatically replayed.
+For speech, the bridge makes at most two attempts within a shared 60-second wakeup budget (at most 45 seconds per attempt) to obtain a fresh frame before opening talkback. This retries only camera wakeup, never audio transmission. If both attempts fail, `/speak` returns HTTP 503 with `code: camera_not_ready`, explicitly meaning no speech started. Other uncertain transport failures must not be automatically replayed.

@@ -67,11 +67,14 @@ export class CameraMedia {
       // The cellular camera must actually be streaming before accepting talkback.
       // SDK talkback attaches a live consumer but does not await the first frame.
       let warm;
+      const wakeDeadline = Date.now() + 60000;
       // A failed cellular cold start can recover on a fresh acquisition. Retry
       // only this pre-speech stage, never talkback or audio transmission.
       for (let attempt = 0; attempt < 2; attempt++) {
         try {
-          warm = normalizeSnapshot(await cam.snapshotLive({ signal: AbortSignal.timeout(25000), timeoutMs: 24000 }), 'live');
+          const remaining = Math.min(45000, wakeDeadline - Date.now());
+          if (remaining <= 0) break;
+          warm = normalizeSnapshot(await cam.snapshotLive({ signal: AbortSignal.timeout(remaining), timeoutMs: Math.max(1, remaining - 1000) }), 'live');
           if (warm.source !== 'live') throw new MediaError('No fresh live frame');
           break;
         } catch {
