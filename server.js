@@ -231,7 +231,11 @@ app.post("/speak", express.raw({ type: ["audio/aac", "audio/aacp", "audio/ogg", 
       return media.speak(aac);
     });
     res.json(result);
-  } catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+  } catch (e) {
+    const code = e.code === 'camera_not_ready' ? 'camera_not_ready' : undefined;
+    console.log('[speech] request failed: ' + (code || 'unconfirmed') + ' status=' + (e.status || 502));
+    res.status(e.status || 502).json({ error: e.message, code });
+  }
 });
 
 // Server starts immediately regardless of login state, so a login problem

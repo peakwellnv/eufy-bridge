@@ -66,8 +66,23 @@ export class CameraMedia {
       if (typeof cam.talkback !== 'function') throw new MediaError('Talkback is not verified for this device by the SDK', 501);
       // The cellular camera must actually be streaming before accepting talkback.
       // SDK talkback attaches a live consumer but does not await the first frame.
-      const warm = normalizeSnapshot(await cam.snapshotLive({ signal: AbortSignal.timeout(45000), timeoutMs: 40000 }), 'live');
-      if (warm.source !== 'live') throw new MediaError('Camera did not start live media for speech');
+      let warm;
+      // A failed cellular cold start can recover on a fresh acquisition. Retry
+      // only this pre-speech stage, never talkback or audio transmission.
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          warm = normalizeSnapshot(await cam.snapshotLive({ signal: AbortSignal.timeout(25000), timeoutMs: 24000 }), 'live');
+          if (warm.source !== 'live') throw new MediaError('No fresh live frame');
+          break;
+        } catch {
+          warm = undefined;
+        }
+      }
+      if (!warm) {
+        const error = new MediaError('Camera could not wake for speech; nothing was spoken', 503);
+        error.code = 'camera_not_ready';
+        throw error;
+      }
       this.lastLiveImageAt = warm.capturedAt;
       const talk = await cam.talkback();
       try {

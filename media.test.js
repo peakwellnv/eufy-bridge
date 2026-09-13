@@ -67,3 +67,17 @@ test('protocol diagnostics retain counters, never payloads or secrets',()=>{
   const out=JSON.stringify(d.snapshot()); assert.equal(d.snapshot().counts.relayOffer,1);
   assert.doesNotMatch(out,/PRIVATE|192\.0/);
 });
+
+test('retry one failed camera wakeup before transmitting exactly once', async()=>{
+  let wakes=0, starts=0, writes=0;
+  const talk=new EventEmitter();talk.write=()=>writes++;talk.end=()=>queueMicrotask(()=>talk.emit('finished'));talk.stop=async()=>{};
+  const media=new CameraMedia(async()=>({snapshotLive:async()=>{if(++wakes===1)throw Error('cold start timed out');return {jpeg};},talkback:async()=>{starts++;return talk;}}));
+  assert.equal((await media.speak(aac)).status,'transmitted');
+  assert.equal(wakes,2);assert.equal(starts,1);assert.equal(writes,1);
+});
+test('two failed wakeups report definitely unspoken and never start talkback',async()=>{
+  let wakes=0,starts=0;
+  const media=new CameraMedia(async()=>({snapshotLive:async()=>{wakes++;throw Error('offline');},talkback:async()=>{starts++;}}));
+  await assert.rejects(media.speak(aac),error=>error.code==='camera_not_ready'&&error.status===503);
+  assert.equal(wakes,2);assert.equal(starts,0);assert.equal(media.busy,false);
+});
