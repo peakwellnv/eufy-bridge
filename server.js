@@ -153,21 +153,45 @@ app.get("/devices", async (req, res) => {
   res.json(devices.map((d) => ({ sn: d.sn, name: d.name })));
 });
 
-// The one endpoint Sage's tool actually calls.
+// The one endpoint Sage's tool actually calls. Tries a fresh live capture
+// first; if the camera won't wake up for a live P2P session (common for a
+// solar/cellular camera that isn't actively streaming), falls back to the
+// last image it pushed to the cloud on its own (motion/schedule). Pass
+// ?mode=stored to skip straight to that, or ?mode=live to require a fresh one.
 app.get("/snapshot", async (req, res) => {
   if (!ready) return res.status(503).json({ error: "not logged in yet" });
   const sn = req.query.sn || process.env.EUFY_CAMERA_SN;
   if (!sn) return res.status(400).json({ error: "no camera serial configured (EUFY_CAMERA_SN or ?sn=)" });
+
+  const mode = req.query.mode || "auto"; // "live" | "stored" | "auto"
 
   try {
     const dev = await eufy.getDevice(sn);
     const cam = dev.camera?.();
     if (!cam) return res.status(404).json({ error: `${sn} has no camera capability` });
 
-    const jpeg = await cam.snapshotLive?.();
-    if (!jpeg) return res.status(502).json({ error: "snapshotLive() returned nothing" });
+    let jpeg;
+    let source;
+
+    if (mode !== "stored") {
+      try {
+        jpeg = await cam.snapshotLive?.();
+        source = "live";
+      } catch (liveErr) {
+        console.error("[eufy-bridge] live snapshot failed:", liveErr instanceof Error ? liveErr.message : liveErr);
+        if (mode === "live") throw liveErr; // caller explicitly wanted live only
+      }
+    }
+
+    if (!jpeg) {
+      jpeg = await cam.snapshotStored?.();
+      source = "stored";
+    }
+
+    if (!jpeg) return res.status(502).json({ error: "no snapshot available (live and stored both empty)" });
 
     res.set("Content-Type", "image/jpeg");
+    res.set("X-Snapshot-Source", source);
     res.send(Buffer.from(jpeg));
   } catch (e) {
     console.error("[eufy-bridge] snapshot error:", e);
