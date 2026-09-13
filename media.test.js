@@ -81,3 +81,12 @@ test('two failed wakeups report definitely unspoken and never start talkback',as
   await assert.rejects(media.speak(aac),error=>error.code==='camera_not_ready'&&error.status===503);
   assert.equal(wakes,2);assert.equal(starts,0);assert.equal(media.busy,false);
 });
+
+test('live diagnostics keep phase counters while discarding source and arbitrary fields',()=>{
+ const d=connectionDiagnostics();
+ d.logger.debug('[live] start trace',{phase:'video-decode-empty',source:'PRIVATE_SERIAL',secret:'PRIVATE_KEY'});
+ d.logger.debug('[live] start trace',{phase:'media-command',action:'start',level2:false});
+ assert.equal(d.snapshot().counts['live_video-decode-empty'],1);
+ assert.equal(d.snapshot().counts.mediaStartL1,1);
+ assert.doesNotMatch(JSON.stringify(d.snapshot()),/PRIVATE/);
+});

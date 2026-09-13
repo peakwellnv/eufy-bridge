@@ -123,7 +123,19 @@ export function connectionDiagnostics() {
   const patterns = { cloudLookup: /sendLookups: cloud/, missingCloudLookup: /NO cloud lookup/, peerAddress: /LOOKUP_ADDR ->/,
     checkingPeer: /beginCheckCam ->/, connected: /\] .* connected /, connectTimeout: /P2P connect timeout/,
     relayOffer: /header=f169/, incomingPacket: /<<< .*header=/ };
-  const record = message => {
+  const phases = new Set(['warming','media-command','first-video-command','first-video-unit','first-keyframe','video-decode-empty','datagram-gap','warm-timeout','start-failed','first-audio','first-foreign-frame']);
+  const record = (message, detail) => {
+    if (message === '[live] start trace' && phases.has(detail?.phase)) {
+      const key = 'live_' + detail.phase;
+      counts[key] = (counts[key] || 0) + 1;
+      if (detail.phase === 'media-command' && detail.action === 'start') {
+        const mode = detail.level2 ? 'mediaStartL2' : 'mediaStartL1';
+        counts[mode] = (counts[mode] || 0) + 1;
+      }
+      lastEventAt = new Date().toISOString();
+    }
+    if (String(message).includes('dropped an incomplete access unit')) counts.incompleteVideoUnit = (counts.incompleteVideoUnit || 0) + 1;
+
     const stage = String(message).match(/relay-step: (\w+)/);
     if (stage) counts[stage[1]] = (counts[stage[1]] || 0) + 1;
     const header = String(message).match(/header=(f1[0-9a-f]{2})/);
