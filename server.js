@@ -153,6 +153,48 @@ app.get("/devices", async (req, res) => {
   res.json(devices.map((d) => ({ sn: d.sn, name: d.name })));
 });
 
+// One-shot diagnostic: dumps device capabilities, battery, and the exact
+// live/stored error each threw, in one response — so we're not trading
+// single log lines back and forth anymore.
+app.get("/debug", async (req, res) => {
+  if (!ready) return res.status(503).json({ error: "not logged in yet" });
+  const sn = req.query.sn || process.env.EUFY_CAMERA_SN;
+  const out = { sn, checkedAt: new Date().toISOString() };
+
+  try {
+    const dev = await eufy.getDevice(sn);
+    out.capabilities = dev.capabilities;
+    out.codec = dev.codec;
+    try {
+      out.battery = dev.battery?.()?.level ?? null;
+    } catch (e) {
+      out.batteryError = e instanceof Error ? e.message : String(e);
+    }
+
+    const cam = dev.camera?.();
+    out.hasCameraCapability = !!cam;
+
+    if (cam) {
+      try {
+        const jpeg = await cam.snapshotLive?.();
+        out.live = { ok: true, bytes: jpeg?.length ?? 0 };
+      } catch (e) {
+        out.live = { ok: false, error: e instanceof Error ? e.message : String(e), name: e?.name };
+      }
+      try {
+        const jpeg = await cam.snapshotStored?.();
+        out.stored = { ok: true, bytes: jpeg?.length ?? 0 };
+      } catch (e) {
+        out.stored = { ok: false, error: e instanceof Error ? e.message : String(e), name: e?.name, reason: e?.reason };
+      }
+    }
+  } catch (e) {
+    out.fatalError = e instanceof Error ? e.message : String(e);
+  }
+
+  res.json(out);
+});
+
 // The one endpoint Sage's tool actually calls. Tries a fresh live capture
 // first; if the camera won't wake up for a live P2P session (common for a
 // solar/cellular camera that isn't actively streaming), falls back to the
