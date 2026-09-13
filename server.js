@@ -227,7 +227,7 @@ app.get("/observe", async (req, res) => {
 app.get("/clip", async (req, res) => {
   try {
     const clip = await media.clip(Number(req.query.seconds || 10));
-    res.type("video/mp4").send(req.query.format === "whatsapp" ? await whatsappVideo(clip) : clip);
+    res.type("video/mp4").send(req.query.format === "whatsapp" ? await whatsappVideo(clip, Number(req.query.seconds || 10)) : clip);
   }
   catch (e) { res.status(e.status || 502).json({ error: e.message }); }
 });
