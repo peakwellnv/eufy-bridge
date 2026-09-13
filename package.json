@@ -2,12 +2,15 @@
   "name": "eufy-bridge",
   "version": "0.1.0",
   "type": "module",
-  "engines": { "node": ">=24.5.0" },
+  "engines": {
+    "node": ">=24.5.0"
+  },
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "test": "node --test"
   },
   "dependencies": {
-    "@mega-yfue/eufy-sdk": "^0.1.2",
+    "@mega-yfue/eufy-sdk": "0.1.2",
     "express": "^4.19.0"
   }
 }

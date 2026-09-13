@@ -1,35 +1,37 @@
-/**
- * eufy-bridge — small Node service that sits between Sage's brain (Python, in
- * sage-whatsapp) and the eufy cloud (Node-only SDK, no Python equivalent).
- *
- * Sage's tool loop calls GET /snapshot to get a fresh JPEG "as needed" — no
- * polling, no fixed cadence. The eufy session (login/2FA/captcha) happens
- * ONCE and is cached to disk, so this service stays logged in across
- * restarts without asking again — UNTIL Railway redeploys onto a fresh
- * filesystem, since there's no persistent volume attached yet.
- *
- * FIRST-TIME LOGIN (captcha/2FA): open
- *   https://<this-service's-public-domain>/verify?token=<BRIDGE_AUTH_TOKEN>
- * in a browser. If eufy needs a captcha or a 2FA code, you'll see a small
- * form right there — no Railway variables, no redeploy needed to clear it.
- *
- * Env vars:
- *   EUFY_EMAIL, EUFY_PASSWORD, EUFY_COUNTRY
- *   EUFY_CAMERA_SN     — the S330's serial number (fill in after first boot;
- *                        boot log prints every device + serial so you can copy it)
- *   BRIDGE_PORT        — defaults to 8090
- *   BRIDGE_AUTH_TOKEN  — shared secret. Sage's tool sends it as
- *                        `Authorization: Bearer <token>`; the /verify page
- *                        takes it as ?token=<token> since it's opened by hand.
- */
+/** Sage camera bridge. See README.md for bounded media, authentication, and deployment. */
 
 import express from "express";
 import path from "node:path";
+import { mkdirSync } from "node:fs";
+import { timingSafeEqual } from "node:crypto";
+import { CameraMedia, connectionDiagnostics } from "./media.js";
+import { transcode } from "./transcode.js";
+import { SpeechLedger } from "./speech-ledger.js";
+import { installCellularRelay } from "./cellular-relay.js";
+if (["true", "experimental"].includes(process.env.EUFY_CELLULAR_RELAY)) installCellularRelay();
 import { fileURLToPath } from "node:url";
 import { EufyMega, FileSessionStore, LoginStatus } from "@mega-yfue/eufy-sdk";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PORT = process.env.BRIDGE_PORT || 8090;
+const PORT = process.env.PORT || process.env.BRIDGE_PORT || 8090;
+if (!process.env.BRIDGE_AUTH_TOKEN) throw new Error("BRIDGE_AUTH_TOKEN must be configured");
+const diagnostics = connectionDiagnostics();
+const sessionPath = process.env.EUFY_SESSION_PATH || path.join(__dirname, ".eufy-session.json");
+mkdirSync(path.dirname(sessionPath), { recursive: true, mode: 0o700 });
+const speechLedger = new SpeechLedger(path.join(path.dirname(sessionPath), "speech-receipts"));
+const media = new CameraMedia(async () => {
+  if (!ready) throw Object.assign(new Error("Camera login is not ready"), { status: 503 });
+  if (!process.env.EUFY_CAMERA_SN) throw Object.assign(new Error("EUFY_CAMERA_SN is not configured"), { status: 503 });
+  const dev = await eufy.getDevice(process.env.EUFY_CAMERA_SN);
+  const cam = dev.camera?.();
+  if (!cam) throw Object.assign(new Error("Device has no camera API"), { status: 501 });
+  return cam;
+});
+function tokenMatches(value) {
+  const actual = Buffer.from(typeof value === "string" ? value : "");
+  const expected = Buffer.from(process.env.BRIDGE_AUTH_TOKEN);
+  return actual.length === expected.length && timingSafeEqual(actual, expected);
+}
 
 let eufy;
 let ready = false;
@@ -54,9 +56,14 @@ async function boot() {
     email: process.env.EUFY_EMAIL,
     password: process.env.EUFY_PASSWORD,
     countryCode: process.env.EUFY_COUNTRY || "US",
-    store: new FileSessionStore(path.join(__dirname, ".eufy-session.json")),
+    store: new FileSessionStore(sessionPath),
+    logger: diagnostics.logger,
+    noBroadcast: true,
+    p2pIdleMs: 15000,
+    ffmpegPath: process.env.FFMPEG_PATH || "ffmpeg",
   });
 
+  eufy.on("error", error => diagnostics.logger.error(error.message));
   let r = await eufy.login();
   while (r.status !== LoginStatus.Ok) {
     if (r.status === LoginStatus.Captcha) {
@@ -82,22 +89,22 @@ async function boot() {
 }
 
 const app = express();
-app.use(express.urlencoded({ extended: false }));
+app.disable("x-powered-by");
+app.use((req, res, next) => { res.set("Cache-Control", "no-store"); res.set("Referrer-Policy", "no-referrer"); next(); });
+app.use(express.urlencoded({ extended: false, limit: "8kb" }));
 
 // Bearer-token auth for the real API — but NOT for /verify, which a human
 // opens directly in a browser and authenticates via ?token= instead.
 app.use((req, res, next) => {
   if (req.path === "/verify") return next();
-  const want = process.env.BRIDGE_AUTH_TOKEN;
-  if (want && req.headers.authorization !== `Bearer ${want}`) {
+  if (!req.headers.authorization?.startsWith("Bearer ") || !tokenMatches(req.headers.authorization.slice(7))) {
     return res.status(401).json({ error: "unauthorized" });
   }
   next();
 });
 
 function checkVerifyToken(req, res) {
-  const want = process.env.BRIDGE_AUTH_TOKEN;
-  if (want && req.query.token !== want) {
+  if (!tokenMatches(req.query.token)) {
     res.status(401).send("Missing or wrong ?token=");
     return false;
   }
@@ -144,108 +151,94 @@ app.post("/verify", (req, res) => {
 });
 
 app.get("/health", (req, res) => {
-  res.json({ ready, pending: pendingChallenge?.kind ?? null });
+  res.json({ ready, lastLiveImageAt: media.lastLiveImageAt || null, busy: media.busy, pending: pendingChallenge?.kind ?? null, connection: diagnostics.snapshot() });
 });
 
 app.get("/devices", async (req, res) => {
   if (!ready) return res.status(503).json({ error: "not logged in yet" });
-  const devices = await eufy.getDevices();
-  res.json(devices.map((d) => ({ sn: d.sn, name: d.name })));
+  try {
+    const devices = await eufy.getDevices();
+    res.json(devices.map((d) => ({ sn: d.sn, name: d.name })));
+  } catch (e) { res.status(502).json({ error: e.message }); }
 });
 
-// One-shot diagnostic: dumps device capabilities, battery, and the exact
-// live/stored error each threw, in one response — so we're not trading
-// single log lines back and forth anymore.
+app.get("/audio-status", async (req, res) => {
+  try {
+    if (!ready) return res.status(503).json({ error: "not logged in yet" });
+    const dev = await eufy.getDevice(process.env.EUFY_CAMERA_SN);
+    const audio = dev.audio?.();
+    res.json({ speaker: audio?.speaker ?? null, volume: audio?.volume ?? null,
+      microphone: audio?.microphone ?? null, audioRecording: audio?.audioRecording ?? null });
+  } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Authenticated diagnostics never expose raw P2P records or credentials.
 app.get("/debug", async (req, res) => {
-  if (!ready) return res.status(503).json({ error: "not logged in yet" });
-  const sn = req.query.sn || process.env.EUFY_CAMERA_SN;
-  const out = { sn, checkedAt: new Date().toISOString() };
-
   try {
-    const dev = await eufy.getDevice(sn);
-    out.capabilities = dev.capabilities;
-    out.codec = dev.codec;
-    try {
-      out.battery = dev.battery?.()?.level ?? null;
-    } catch (e) {
-      out.batteryError = e instanceof Error ? e.message : String(e);
-    }
-
+    if (!ready) return res.status(503).json({ error: "not logged in yet" });
+    const dev = await eufy.getDevice(process.env.EUFY_CAMERA_SN);
     const cam = dev.camera?.();
-    out.hasCameraCapability = !!cam;
-
-    if (cam) {
-      try {
-        const jpeg = await cam.snapshotLive?.();
-        out.live = { ok: true, bytes: jpeg?.length ?? 0 };
-      } catch (e) {
-        out.live = { ok: false, error: e instanceof Error ? e.message : String(e), name: e?.name };
-      }
-      try {
-        const jpeg = await cam.snapshotStored?.();
-        out.stored = { ok: true, bytes: jpeg?.length ?? 0 };
-      } catch (e) {
-        out.stored = { ok: false, error: e instanceof Error ? e.message : String(e), name: e?.name, reason: e?.reason };
-      }
+    const out = { checkedAt: new Date().toISOString(), capabilities: dev.capabilities,
+      battery: dev.battery?.()?.level ?? null,
+      methods: Object.fromEntries(["snapshotLive", "snapshotStored", "live", "recordFragments", "talkback"].map(k => [k, typeof cam?.[k] === "function"])) };
+    for (const mode of ["live", "stored"]) {
+      try { const shot = await media.snapshot(mode); out[mode] = { ok: true, bytes: shot.jpeg.length, source: shot.source }; }
+      catch (e) { out[mode] = { ok: false, error: e.message, reason: e.reason }; }
     }
-  } catch (e) {
-    out.fatalError = e instanceof Error ? e.message : String(e);
-  }
-
-  res.json(out);
+    out.connection = diagnostics.snapshot();
+    res.json(out);
+  } catch (e) { res.status(e.status || 502).json({ error: e.message }); }
 });
 
-// The one endpoint Sage's tool actually calls. Tries a fresh live capture
-// first; if the camera won't wake up for a live P2P session (common for a
-// solar/cellular camera that isn't actively streaming), falls back to the
-// last image it pushed to the cloud on its own (motion/schedule). Pass
-// ?mode=stored to skip straight to that, or ?mode=live to require a fresh one.
 app.get("/snapshot", async (req, res) => {
-  if (!ready) return res.status(503).json({ error: "not logged in yet" });
-  const sn = req.query.sn || process.env.EUFY_CAMERA_SN;
-  if (!sn) return res.status(400).json({ error: "no camera serial configured (EUFY_CAMERA_SN or ?sn=)" });
-
-  const mode = req.query.mode || "auto"; // "live" | "stored" | "auto"
-
   try {
-    const dev = await eufy.getDevice(sn);
-    const cam = dev.camera?.();
-    if (!cam) return res.status(404).json({ error: `${sn} has no camera capability` });
+    const shot = await media.snapshot(req.query.mode || "live");
+    res.set("X-Snapshot-Source", shot.source);
+    res.set("X-Retrieved-At", shot.retrievedAt);
+    if (shot.capturedAt) res.set("X-Captured-At", shot.capturedAt);
+    res.type("image/jpeg").send(shot.jpeg);
+  } catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+});
 
-    let jpeg;
-    let source;
+app.get("/observe", async (req, res) => {
+  try {
+    const { jpeg, ...evidence } = await media.snapshot("live");
+    res.json({ ...evidence, image: { mime: "image/jpeg", base64: jpeg.toString("base64") } });
+  } catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+});
 
-    if (mode !== "stored") {
-      try {
-        jpeg = await cam.snapshotLive?.();
-        source = "live";
-      } catch (liveErr) {
-        console.error("[eufy-bridge] live snapshot failed:", liveErr instanceof Error ? liveErr.message : liveErr);
-        if (mode === "live") throw liveErr; // caller explicitly wanted live only
-      }
-    }
+// Bounded MP4 containing video and camera audio when the device delivers it.
+app.get("/clip", async (req, res) => {
+  try { res.type("video/mp4").send(await media.clip(Number(req.query.seconds || 10))); }
+  catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+});
 
-    if (!jpeg) {
-      jpeg = await cam.snapshotStored?.();
-      source = "stored";
-    }
+app.get("/listen", async (req, res) => {
+  try {
+    const clip = await media.clip(Number(req.query.seconds || 5));
+    const wav = await transcode(clip, "mp4", "wav");
+    res.json({ retrievedAt: new Date().toISOString(), audio: { mime: "audio/wav", base64: wav.toString("base64") } });
+  } catch (e) { res.status(e.status || 502).json({ error: e.message }); }
+});
 
-    if (!jpeg) return res.status(502).json({ error: "no snapshot available (live and stored both empty)" });
-
-    res.set("Content-Type", "image/jpeg");
-    res.set("X-Snapshot-Source", source);
-    res.send(Buffer.from(jpeg));
-  } catch (e) {
-    console.error("[eufy-bridge] snapshot error:", e);
-    res.status(502).json({ error: e instanceof Error ? e.message : String(e) });
-  }
+app.post("/speak", express.raw({ type: ["audio/aac", "audio/aacp", "audio/ogg", "audio/wav", "audio/mpeg"], limit: "2mb" }), async (req, res) => {
+  if (process.env.EUFY_TALK_ENABLED !== "true") return res.status(503).json({ error: "Talkback is not enabled on this bridge" });
+  try {
+    if (!Buffer.isBuffer(req.body) || !req.body.length) return res.status(400).json({ error: "Audio body is required" });
+    const result = await speechLedger.run(req.headers["idempotency-key"], req.body, async () => {
+      const format = { "audio/ogg": "ogg", "audio/wav": "wav", "audio/mpeg": "mp3" }[req.get("Content-Type")?.split(";")[0]];
+      const aac = format ? await transcode(req.body, format, "adts") : req.body;
+      return media.speak(aac);
+    });
+    res.json(result);
+  } catch (e) { res.status(e.status || 502).json({ error: e.message }); }
 });
 
 // Server starts immediately regardless of login state, so a login problem
 // never crashes the process — Railway restarts crashed processes instantly,
 // and repeated instant retries is exactly what tripped eufy's
 // 5-failed-attempts lockout earlier. Failed/blocked logins just wait.
-app.listen(PORT, () => console.log(`[eufy-bridge] listening on :${PORT}`));
+app.listen(PORT, process.env.BRIDGE_HOST || "0.0.0.0", () => console.log(`[eufy-bridge] listening on :${PORT}`));
 
 const RETRY_MS = 10 * 60 * 1000; // back off 10 min between login retries after a hard failure
 

@@ -1,0 +1,10 @@
+.git
+node_modules
+.env*
+.eufy-session.json
+sessions
+speech-receipts
+*.jpg
+*.aac
+*.mp3
+*.mp4
