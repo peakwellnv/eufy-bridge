@@ -3,6 +3,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certi
 WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
-COPY server.js media.js cellular-relay.js transcode.js speech-ledger.js ./
+COPY server.js media.js cellular-relay.js transcode.js speech-ledger.js whatsapp-video.js ./
 ENV PORT=8090
 CMD ["node", "server.js"]
