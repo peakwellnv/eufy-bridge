@@ -182,8 +182,8 @@ app.get("/power-status", async (req, res) => {
 app.get("/motion-status", async (req, res) => {
   try {
     if (!ready) return res.status(503).json({error:"not logged in yet"});
-    const devices=await eufy.getDevices();
-    const dev=devices.find(d=>d.sn===process.env.EUFY_CAMERA_SN);
+    await eufy.getDevices();
+    const dev=await eufy.getDevice(process.env.EUFY_CAMERA_SN);
     const motion=dev?.motion?.();
     res.json({checkedAt:new Date().toISOString(), detectionEnabled:motion?.detectionEnabled ?? null,
       canSetDetection:typeof motion?.setDetection === "function", source:"reported-device-state"});
