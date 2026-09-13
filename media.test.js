@@ -103,3 +103,10 @@ test('failed live acquisition never speaks and releases media lock', async()=>{
  const media=new CameraMedia(async()=>({live:async()=>{throw Error('offline');},talkback:async()=>{speaks++;}}));
  await assert.rejects(media.speak(aac),e=>e.code==='camera_not_ready');assert.equal(speaks,0);assert.equal(media.busy,false);
 });
+
+test('video retries a cold acquisition and retains/relinquishes the live source', async()=>{
+ let wakes=0,released=false,recordings=0;
+ const media=new CameraMedia(async()=>({live(){},recordFragments(){recordings++;return {async *[Symbol.asyncIterator](){yield {init:Buffer.from('init'),data:Buffer.from('video')};},stop(){}};}}));
+ media.readyForSpeech=async()=>{if(++wakes===1)throw Error('cold');return {stop(){released=true;}};};
+ assert.equal((await media.clip(2)).toString(),'initvideo');assert.equal(wakes,2);assert.equal(recordings,1);assert.ok(released);assert.equal(media.busy,false);
+});

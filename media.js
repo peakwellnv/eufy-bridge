@@ -52,8 +52,24 @@ export class CameraMedia {
     if (!Number.isInteger(seconds) || seconds < 2 || seconds > 20) throw new MediaError('seconds must be an integer from 2 to 20', 400);
     return this.exclusive(async cam => {
       if (typeof cam.recordFragments !== 'function') throw new MediaError('Video/audio recording API unavailable', 501);
+      // Confirm live frames and retain the source through recording. A cold
+      // cellular connection may fail its first acquisition, as with speech.
+      let warm;
+      const wakeDeadline = Date.now() + 60000;
+      if (typeof cam.live === 'function') {
+        for (let attempt = 0; attempt < 2; attempt++) {
+          try {
+            const remaining = Math.min(45000, wakeDeadline - Date.now());
+            if (remaining <= 0) break;
+            warm = await this.readyForSpeech(cam, remaining); break;
+          } catch { /* Retry only camera acquisition, not a completed clip. */ }
+        }
+        if (!warm) throw new MediaError('Camera could not wake for video; no clip was captured', 503);
+      }
       const controller = new AbortController();
-      const stream = cam.recordFragments({ fragmentSeconds: 1, signal: controller.signal });
+      let stream;
+      try { stream = cam.recordFragments({ fragmentSeconds: 1, signal: controller.signal }); }
+      catch (error) { warm?.stop(); throw error; }
       const chunks = []; let bytes = 0; let mediaBytes = 0; let initialized = false; let timer;
       const startup = setTimeout(() => controller.abort(new Error('Camera did not start video')), 45000);
       try {
@@ -67,7 +83,7 @@ export class CameraMedia {
         }
         if (!initialized || !mediaBytes) throw new MediaError('Camera delivered no playable video');
         return Buffer.concat(chunks);
-      } finally { clearTimeout(startup); clearTimeout(timer); controller.abort(); stream.stop(); }
+      } finally { clearTimeout(startup); clearTimeout(timer); controller.abort(); try { stream.stop(); } finally { warm?.stop(); } }
     });
   }
   async readyForSpeech(cam, milliseconds) {
