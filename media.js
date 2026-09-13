@@ -27,7 +27,18 @@ export class CameraMedia {
       if (mode !== 'stored') {
         try {
           if (typeof cam.snapshotLive !== 'function') throw new MediaError('Live snapshot API unavailable', 501);
-          const shot = normalizeSnapshot(await cam.snapshotLive({ signal: AbortSignal.timeout(45000), timeoutMs: 40000 }), 'live');
+          const deadline = Date.now() + 60000;
+          let shot;
+          for (let attempt = 0; attempt < 2; attempt++) {
+            try {
+              const remaining = Math.min(45000, deadline - Date.now());
+              if (remaining <= 0) break;
+              shot = normalizeSnapshot(await cam.snapshotLive({ signal: AbortSignal.timeout(remaining), timeoutMs: Math.max(1, remaining - 1000) }), 'live');
+              if (mode === 'live' && shot.source !== 'live') throw new MediaError('Only a retained image is available; no fresh view');
+              break;
+            } catch (error) { if (attempt === 1) throw error; }
+          }
+          if (!shot) throw new MediaError('Camera could not wake for a fresh view', 503);
           if (mode === 'live' && shot.source !== 'live') throw new MediaError('Only a retained image is available; no fresh view');
           if (shot.source === 'live') this.lastLiveImageAt = shot.capturedAt;
           return shot;
@@ -59,9 +70,37 @@ export class CameraMedia {
       } finally { clearTimeout(startup); clearTimeout(timer); controller.abort(); stream.stop(); }
     });
   }
+  async readyForSpeech(cam, milliseconds) {
+    // A new consumer can be primed with one cached keyframe. Wait for a
+    // subsequent frame as evidence that the camera is actually streaming.
+    // Keep this consumer alive through speech; avoid JPEG decoding entirely.
+    if (typeof cam.live !== 'function') {
+      const shot = normalizeSnapshot(await cam.snapshotLive({ signal: AbortSignal.timeout(milliseconds), timeoutMs: Math.max(1, milliseconds - 1000) }), 'live');
+      if (shot.source !== 'live') throw new MediaError('No fresh live frame');
+      return { stop() {} };
+    }
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), milliseconds);
+    let stream;
+    try {
+      stream = await cam.live({ signal: controller.signal });
+      await new Promise((resolve, reject) => {
+        let frames = 0;
+        const abort = () => reject(new MediaError('Camera wake timed out'));
+        controller.signal.addEventListener('abort', abort, { once: true });
+        if (controller.signal.aborted) return abort();
+        stream.on('error', reject);
+        stream.on('stop', () => reject(new MediaError('Camera stopped before speech')));
+        stream.on('video', frame => { if (frame.data?.length && ++frames >= 2) resolve(); });
+      });
+      return stream;
+    } catch (error) { stream?.stop(); throw error; }
+    finally { clearTimeout(timer); }
+  }
   async speak(aac) {
     if (!Buffer.isBuffer(aac) || !aac.length || aac.length > 512 * 1024) throw new MediaError('Send a nonempty AAC clip up to 512 KB', 400);
     validateAac(aac);
+    const startedAt = Date.now();
     return this.exclusive(async cam => {
       if (typeof cam.talkback !== 'function') throw new MediaError('Talkback is not verified for this device by the SDK', 501);
       // The cellular camera must actually be streaming before accepting talkback.
@@ -74,8 +113,7 @@ export class CameraMedia {
         try {
           const remaining = Math.min(45000, wakeDeadline - Date.now());
           if (remaining <= 0) break;
-          warm = normalizeSnapshot(await cam.snapshotLive({ signal: AbortSignal.timeout(remaining), timeoutMs: Math.max(1, remaining - 1000) }), 'live');
-          if (warm.source !== 'live') throw new MediaError('No fresh live frame');
+          warm = await this.readyForSpeech(cam, remaining);
           break;
         } catch {
           warm = undefined;
@@ -86,9 +124,11 @@ export class CameraMedia {
         error.code = 'camera_not_ready';
         throw error;
       }
-      this.lastLiveImageAt = warm.capturedAt;
-      const talk = await cam.talkback();
+      this.lastLiveFrameAt = new Date().toISOString();
+      const wakeMs = Date.now() - startedAt;
+      let talk;
       try {
+        talk = await cam.talkback();
         await new Promise((resolve, reject) => {
           let finished = false;
           const timer = setTimeout(() => reject(new MediaError('Talkback timed out; playback is unconfirmed')), 45000);
@@ -98,8 +138,8 @@ export class CameraMedia {
           talk.on('finished', () => { finished = true; clearTimeout(timer); resolve(); });
           try { talk.write(aac); talk.end(); } catch (err) { fail(err); }
         });
-        return { status: 'transmitted', audibleAtCamera: 'unconfirmed', completedAt: new Date().toISOString() };
-      } finally { await talk.stop(); }
+        return { status: 'transmitted', audibleAtCamera: 'unconfirmed', completedAt: new Date().toISOString(), timing: { wakeMs, totalMs: Date.now() - startedAt } };
+      } finally { try { await talk?.stop(); } finally { warm.stop(); } }
     });
   }
 }

@@ -90,3 +90,16 @@ test('live diagnostics keep phase counters while discarding source and arbitrary
  assert.equal(d.snapshot().counts.mediaStartL1,1);
  assert.doesNotMatch(JSON.stringify(d.snapshot()),/PRIVATE/);
 });
+
+test('speech waits past cached frame, skips JPEG decoding and releases live stream', async()=>{
+ const stream=new EventEmitter(); let stopped=false,decoded=0,frames=0;
+ stream.stop=()=>{stopped=true;};
+ const talk=new EventEmitter();talk.write=()=>assert.ok(frames>=2);talk.end=()=>queueMicrotask(()=>talk.emit('finished'));talk.stop=async()=>{};
+ const media=new CameraMedia(async()=>({live:async()=>{setTimeout(()=>{frames++;stream.emit('video',{data:jpeg});frames++;stream.emit('video',{data:jpeg});},5);return stream;},snapshotLive:async()=>{decoded++;return {jpeg};},talkback:async()=>talk}));
+ assert.equal((await media.speak(aac)).status,'transmitted');assert.equal(decoded,0);assert.ok(stopped);
+});
+test('failed live acquisition never speaks and releases media lock', async()=>{
+ let speaks=0;
+ const media=new CameraMedia(async()=>({live:async()=>{throw Error('offline');},talkback:async()=>{speaks++;}}));
+ await assert.rejects(media.speak(aac),e=>e.code==='camera_not_ready');assert.equal(speaks,0);assert.equal(media.busy,false);
+});

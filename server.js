@@ -151,7 +151,7 @@ app.post("/verify", (req, res) => {
 });
 
 app.get("/health", (req, res) => {
-  res.json({ ready, lastLiveImageAt: media.lastLiveImageAt || null, busy: media.busy, pending: pendingChallenge?.kind ?? null, connection: diagnostics.snapshot() });
+  res.json({ ready, lastLiveFrameAt: media.lastLiveFrameAt || null, lastLiveImageAt: media.lastLiveImageAt || null, busy: media.busy, pending: pendingChallenge?.kind ?? null, connection: diagnostics.snapshot() });
 });
 
 app.get("/devices", async (req, res) => {
@@ -160,6 +160,21 @@ app.get("/devices", async (req, res) => {
     const devices = await eufy.getDevices();
     res.json(devices.map((d) => ({ sn: d.sn, name: d.name })));
   } catch (e) { res.status(502).json({ error: e.message }); }
+});
+
+// Reading cached power facts does not start a camera stream. Charging alone
+// does not establish continuous mains power (solar also charges this model).
+app.get("/power-status", async (req, res) => {
+  try {
+    if (!ready) return res.status(503).json({ error: "not logged in yet" });
+    const dev = await eufy.getDevice(process.env.EUFY_CAMERA_SN);
+    const battery = dev.battery?.();
+    res.json({ checkedAt: new Date().toISOString(), battery: battery?.level ?? null,
+      charging: battery?.charging ?? null, configuredSource: battery?.powerSource ?? null,
+      solarIntensity: battery?.solarIntensity ?? null, solarConnected24h: battery?.solarConnected24h ?? null,
+      continuousPowerConfirmed: false, policy: "five-minute-checks",
+      note: "Cached device facts. Charging does not prove continuous mains power on this battery camera." });
+  } catch (e) { res.status(502).json({ error: "Power status unavailable" }); }
 });
 
 app.get("/audio-status", async (req, res) => {
