@@ -17,7 +17,12 @@ export function normalizeSnapshot(value, requestedSource) {
 export class CameraMedia {
   constructor(getCamera) { this.getCamera = getCamera; this.busy = false; }
   async exclusive(fn) {
-    if (this.busy) throw new MediaError('Camera is busy; retry after the current operation finishes', 409);
+    if (this.busy) {
+      // Thrown before the camera is touched: nothing was captured or spoken.
+      const error = new MediaError('Camera is busy; retry after the current operation finishes', 409);
+      error.code = 'camera_busy';
+      throw error;
+    }
     this.busy = true;
     try { return await fn(await this.getCamera()); } finally { this.busy = false; }
   }

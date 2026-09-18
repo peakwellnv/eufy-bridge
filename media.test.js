@@ -30,7 +30,7 @@ test('only explicit auto falls back to stored', async () => {
 test('reject overlapping camera operations without starting another wakeup', async () => {
   let release; const media = new CameraMedia(async () => ({}));
   const pending = media.exclusive(() => new Promise(resolve => release=resolve));
-  await assert.rejects(media.snapshot(), /busy/); release(); await pending;
+  await assert.rejects(media.snapshot(), e => /busy/.test(e.message) && e.code === 'camera_busy' && e.status === 409); release(); await pending;
 });
 test('reject malformed camera images', () => {
   for (const value of [undefined, Buffer.alloc(0), {jpeg:Buffer.from('not jpeg')}]) assert.throws(() => normalizeSnapshot(value,'live'), /valid JPEG/);
