@@ -42,3 +42,15 @@ test('decode real PCM tone to camera AAC; reject corrupt input',async()=>{
  await assert.rejects(transcode(Buffer.from('invalid'),'mp3','adts'),/decoded/);
  assert.throws(()=>transcode(wav,'file','adts'),/Unsupported/);
 });
+
+test('a busy camera releases the claim so the same request can retry',async()=>{
+ const dir=mkdtempSync(path.join(tmpdir(),'sage-speech-'));
+ try{
+  const ledger=new SpeechLedger(dir);const busy=Object.assign(Error('Camera is busy'),{code:'camera_busy',status:409});
+  await assert.rejects(ledger.run('busy-request',Buffer.from('a'),async()=>{throw busy;}),e=>e.code==='camera_busy');
+  assert.deepEqual(await ledger.run('busy-request',Buffer.from('a'),async()=>({status:'transmitted'})),{status:'transmitted'});
+  // An uncoded failure still burns the key: its outcome is uncertain.
+  await assert.rejects(ledger.run('lost-request',Buffer.from('a'),async()=>{throw Error('connection lost');}));
+  await assert.rejects(ledger.run('lost-request',Buffer.from('a'),async()=>({})),/uncertain/);
+ }finally{rmSync(dir,{recursive:true,force:true});}
+});

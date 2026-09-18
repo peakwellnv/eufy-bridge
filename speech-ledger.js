@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { mkdirSync, openSync, writeFileSync, closeSync, fsyncSync, readFileSync, renameSync } from 'node:fs';
+import { mkdirSync, openSync, writeFileSync, closeSync, fsyncSync, readFileSync, renameSync, unlinkSync } from 'node:fs';
 import path from 'node:path';
 import { MediaError } from './media.js';
 
@@ -21,7 +21,15 @@ export class SpeechLedger {
     }
     try{writeFileSync(descriptor,JSON.stringify({hash,state:'claimed',at:new Date().toISOString()}));fsyncSync(descriptor);}
     finally{closeSync(descriptor);}
-    const result=await send();
+    let result;
+    try{result=await send();}
+    catch(error){
+      // camera_busy is raised before the camera is touched, so nothing was
+      // transmitted. Release the claim so the same request can be retried.
+      // Every other failure keeps the claim: its outcome is uncertain.
+      if(error?.code==='camera_busy'){try{unlinkSync(file);}catch{}}
+      throw error;
+    }
     const temp=file+'.tmp';writeFileSync(temp,JSON.stringify({hash,state:'complete',result}),{mode:0o600});renameSync(temp,file);
     return result;
   }
