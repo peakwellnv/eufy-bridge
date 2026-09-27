@@ -1,0 +1,84 @@
+{
+  "observedOn": "2026-09-27",
+  "sdkVersion": "0.1.2",
+  "kind": "redacted-probe-metadata-not-record-fixtures",
+  "sessionReused": true,
+  "newLoginAttempted": false,
+  "cameraCommandsIssued": false,
+  "probes": [
+    {
+      "host": "security-app.eufylife.com",
+      "method": "POST",
+      "path": "/v2/event/app/get_all_video_record",
+      "httpStatus": 401,
+      "apiCode": 26035,
+      "errorType": "MegaApiError",
+      "deviceScope": "configured-camera-only",
+      "rangeSeconds": 86400,
+      "num": 5,
+      "shared": false,
+      "exclude_guest": true
+    },
+    {
+      "host": "security-app.eufylife.com",
+      "method": "POST",
+      "path": "/v3/event/app/get_all_video_record",
+      "sdkReturnedArray": false,
+      "sdkReturnedObjectKeys": [],
+      "deviceScope": "configured-camera-only",
+      "rangeSeconds": 86400,
+      "num": 5,
+      "shared": false,
+      "exclude_guest": true
+    },
+    {
+      "host": "app-house-us-pr.eufy.com",
+      "method": "POST",
+      "path": "/app/house/get_devs_list",
+      "configuredCameraFound": true,
+      "stationAdminMatchesSessionUser": true,
+      "topLevelNumericStorageFields": {}
+    },
+    {
+      "host": "security-app.eufylife.com",
+      "method": "POST",
+      "path": "/v3/event/app/get_all_video_record",
+      "httpStatus": 200,
+      "apiCode": 0,
+      "wireDataType": "string",
+      "decryptedData": null,
+      "deviceScope": "configured-camera-only",
+      "stationScope": "parent-or-configured-camera",
+      "rangeSeconds": 86400,
+      "num": 5,
+      "shared": true,
+      "exclude_guest": false
+    },
+    {
+      "host": "security-app.eufylife.com",
+      "method": "POST",
+      "path": "/v3/event/app/get_all_history_record",
+      "decryptedData": null,
+      "deviceScope": "configured-camera-only",
+      "rangeSeconds": 86400,
+      "num": 5,
+      "shared": false,
+      "exclude_guest": true
+    }
+  ],
+  "followUp": {
+    "appTimezone": "CDT",
+    "storageConfirmed": false,
+    "sdkCloudFilterResult": null,
+    "securityApplicationListHttpStatus": 401,
+    "webKeyExchangeHttpStatus": 403,
+    "p2pProbeCount": 2,
+    "p2pQuerySent": false,
+    "p2pRecordsReceived": 0,
+    "diagnosticCleanupError": "ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING",
+    "bridgeRestarts": 3,
+    "debuggerClosed": true,
+    "featureDeployed": false,
+    "recordingDownloaded": false
+  }
+}

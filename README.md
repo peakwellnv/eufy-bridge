@@ -67,3 +67,44 @@ and the SDK battery budget; do not keep a continuous video stream alive.
 seekable H.264/AAC MP4 for WhatsApp. Clips remain bounded to 2–20 seconds.
 Conversion uses a private temporary directory that is removed on completion or
 failure. Existing `/clip` callers retain their original recording format.
+
+## Saved recordings (off by default)
+
+Set `RECORDINGS_ENABLED=true` to mount the authenticated read-only endpoints.
+With the flag absent or off, authenticated requests return 404. Both enabled
+routes use the existing bearer middleware and `Cache-Control: no-store`.
+
+- `GET /recordings?since=<ISO>&until=<ISO>&limit=<n>` returns safe metadata and
+  opaque IDs: `{ recordings: [{ id, startedAt, endedAt, durationSeconds, storage,
+  eventType }], possiblyTruncated }`. Defaults: last 24 hours, 20 events. Maximum:
+  seven days, 100 events. Lists, including failures, are limited to once per minute.
+  Date-only inputs use the camera's timezone, configured by `RECORDINGS_TIME_ZONE`
+  (default `America/Chicago`); timestamp inputs require an explicit timezone.
+  Results are newest first. A full page sets `possiblyTruncated`; to request an
+  older page, use an `until` timestamp earlier than the oldest returned event.
+- `GET /recording/<id>` returns a portable H.264 MP4 with video only. IDs expire
+  after 15 minutes or restart. Downloads must be under 25 MiB and at most 20.5
+  seconds, with fully decodable 1–120 fps video. Longer recordings are rejected
+  rather than trimmed. ffmpeg and ffprobe validate every result; executable
+  overrides are `FFMPEG_PATH` and `FFPROBE_PATH`.
+
+The verified T86P2 path reads local saved recordings using calendar command
+10017 and download command 1024. It decrypts saved H.265 keyframes using the
+camera's download acknowledgment, checks the listed frame count and actual
+transfer completion, then converts to MP4. It does not start live video. Both
+P2P operations hold `media.exclusive`; a busy camera returns 409. A download
+closes its P2P session before releasing the lock. The feature retains the
+existing account session and sends no camera setting commands.
+
+Verified on the owner's September 27, 2026, 3:22:34 PM CDT recording: all 158
+frames retrieved and a fully decoded 1.88 MB MP4 produced. Cellular timeouts
+remain possible; incomplete or corrupt transfers fail instead of returning
+partial footage. Unsupported cameras, storage/encryption formats, or oversized
+recordings fail explicitly. The cloud event endpoint returned null for this
+account and is not the verified path. No consumer sampling behavior changes.
+
+Errors use `{ error }`: unknown/expired ID 404, occupied media 409, oversized
+clip 413, list rate limit 429, unsupported format 501, failed transfer 502,
+and timeout 504. Upstream paths, IDs, account data and keys are never returned.
+See [recordings research](docs/RECORDINGS_RESEARCH.md) for protocol evidence,
+limitations, historical diagnostics, and deployment status.

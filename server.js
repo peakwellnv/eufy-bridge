@@ -9,6 +9,9 @@ import { transcode } from "./transcode.js";
 import { whatsappVideo } from "./whatsapp-video.js";
 import { SpeechLedger } from "./speech-ledger.js";
 import { installCellularRelay } from "./cellular-relay.js";
+import { Recordings } from "./recordings.js";
+import { mountRecordings } from "./recordings-routes.js";
+import { MediaError } from "./media.js";
 if (["true", "experimental"].includes(process.env.EUFY_CELLULAR_RELAY)) installCellularRelay();
 import { fileURLToPath } from "node:url";
 import { EufyMega, FileSessionStore, LoginStatus } from "@mega-yfue/eufy-sdk";
@@ -111,6 +114,16 @@ function checkVerifyToken(req, res) {
   }
   return true;
 }
+
+// Cloud-only reads do not acquire the P2P media lock or wake a live stream.
+// Any future local-storage adapter must execute under media.exclusive.
+mountRecordings(app, process.env.RECORDINGS_ENABLED === 'true' ? new Recordings(async () => {
+  if (!ready) throw new MediaError('Camera login is not ready', 503);
+  const cameraSn = process.env.EUFY_CAMERA_SN;
+  if (!cameraSn) throw new MediaError('EUFY_CAMERA_SN is not configured', 503);
+  const devices = await eufy.getDevices();
+  return { eufy, media, api: eufy.api, cameraSn, device: devices.find(device => device.sn === cameraSn) };
+}, { timeZone: process.env.RECORDINGS_TIME_ZONE || 'America/Chicago' }) : null, process.env.RECORDINGS_ENABLED === 'true');
 
 app.get("/verify", (req, res) => {
   if (!checkVerifyToken(req, res)) return;

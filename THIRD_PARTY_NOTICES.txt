@@ -1,3 +1,14 @@
+The event-list request fields and event-record schema used by recordings.js,
+and local database query/table structures used by recordings-local.js,
+along with the previously adapted cellular relay handshake, derive from
+bropat/eufy-security-client at commit
+3bfef130bdcbff8f2f68286a5f63ec7e48177202:
+https://github.com/bropat/eufy-security-client
+Relevant files: src/http/api.ts, src/http/models.ts, src/http/types.ts, src/http/station.ts,
+src/p2p/session.ts and src/p2p/utils.ts.
+The bridge uses @mega-yfue/eufy-sdk's existing authenticated transport and
+media downloader without copying or replacing that package's implementation.
+
 MIT License
 
 Copyright (c) 2021-2024 bropat <patrick.broetto@gmail.com>
@@ -19,3 +30,10 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Saved-recording follow-up (2026-09-27): local 10017 calendar/table structures,
+1024 string download body and 1051 cancellation framing are derived from the
+above MIT reference client. ACK-derived timestamp key selection and the
+T86P2 saved-frame layout were independently verified against the owner device
+and examined app decoder. Key derivation itself reuses the pinned MIT SDK's
+getImageKey export. No proprietary app code or binary is redistributed.

@@ -1,0 +1,116 @@
+{
+  "observedOn": "2026-09-27",
+  "kind": "sanitized-protocol-observations-not-record-fixtures",
+  "cameraScope": "verified-owner-standalone-camera",
+  "mediaLockUsed": true,
+  "processUnchangedAfterChecks": true,
+  "inspectorClosedAfterChecks": true,
+  "appReference": {
+    "source": "owner iPhone report",
+    "localTime": "2026-09-27T15:22:34-05:00",
+    "utcTime": "2026-09-27T20:22:34Z"
+  },
+  "queries": [
+    {
+      "command": 10006,
+      "countLimit": 5,
+      "acknowledgmentCode": 0,
+      "databaseReplyReceived": false
+    },
+    {
+      "command": 10017,
+      "countLimit": 5,
+      "dateRange": [
+        "20260926",
+        "20260928"
+      ],
+      "deviceFilter": "configured-camera",
+      "reply": {
+        "cmd": 10017,
+        "mIntRet": 0
+      },
+      "normalizedRowCount": 0
+    },
+    {
+      "command": 10008,
+      "requestedDateRange": [
+        "20260920",
+        "20260928"
+      ],
+      "reply": {
+        "cmd": 10008,
+        "mIntRet": 0,
+        "data": [
+          {
+            "days": "20260913",
+            "count": 1
+          },
+          {
+            "days": "20260914",
+            "count": 1
+          },
+          {
+            "days": "20260915",
+            "count": 1
+          },
+          {
+            "days": "20260916",
+            "count": 1
+          },
+          {
+            "days": "20260917",
+            "count": 1
+          },
+          {
+            "days": "20260918",
+            "count": 1
+          },
+          {
+            "days": "20260919",
+            "count": 1
+          },
+          {
+            "days": "20260920",
+            "count": 1
+          },
+          {
+            "days": "20260922",
+            "count": 1
+          },
+          {
+            "days": "20260924",
+            "count": 1
+          },
+          {
+            "days": "20260925",
+            "count": 1
+          },
+          {
+            "days": "20260926",
+            "count": 1
+          },
+          {
+            "days": "20260927",
+            "count": 1
+          }
+        ]
+      },
+      "note": "Returned dates exceed requested range; count=1 may indicate day presence rather than literal event count."
+    },
+    {
+      "command": 10000,
+      "countLimit": 5,
+      "acknowledgmentCode": 0,
+      "databaseReplyReceived": false
+    },
+    {
+      "command": 10009,
+      "countLimit": 5,
+      "reply": {
+        "cmd": 10009,
+        "mIntRet": -1006
+      },
+      "meaning": "unconfirmed"
+    }
+  ]
+}
