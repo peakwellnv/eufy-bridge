@@ -67,3 +67,39 @@ and the SDK battery budget; do not keep a continuous video stream alive.
 seekable H.264/AAC MP4 for WhatsApp. Clips remain bounded to 2–20 seconds.
 Conversion uses a private temporary directory that is removed on completion or
 failure. Existing `/clip` callers retain their original recording format.
+
+## Saved recordings (experimental, off by default)
+
+`RECORDINGS_ENABLED` enables two read-only endpoints only when set to `true`.
+Both use the existing bearer authentication and `Cache-Control: no-store`.
+With the flag absent or off, authenticated requests return 404.
+
+- `GET /recordings?since=<ISO>&until=<ISO>&limit=<n>` returns
+  `{ recordings: [{ id, startedAt, endedAt, durationSeconds, storage, eventType }],
+  possiblyTruncated }`. Dates accept `YYYY-MM-DD` (UTC) or a timestamp with a
+  timezone. Defaults are the last 24 hours and 20 records; maximums are seven
+  days and 100 records. List attempts, including failures, are limited to one
+  per minute. A full page sets `possiblyTruncated`; pagination is not verified.
+- `GET /recording/<id>` accepts an opaque handle from a successful list and
+  returns `video/mp4`. Handles expire after 15 minutes or process restart.
+  Output must be smaller than 25 MiB, have decodable video at 1–120 fps, and
+  last at most approximately 20 seconds (20.5 seconds of timestamp tolerance).
+  Longer events are rejected, not silently trimmed. Validation uses ffmpeg and
+  ffprobe; the additional executable override is `FFPROBE_PATH`.
+
+**This camera's saved recordings are not yet available through these routes.**
+Real-account video and history requests currently return `null`, which the
+adapter reports as HTTP 502 rather than an empty day. The implemented download
+path supports only explicitly unencrypted cloud records whose URLs the SDK
+already permits. It retains the SDK's stricter 10 MiB download limit, host
+allowlist, redirect rules, and timeout. Local P2P downloads and encrypted cloud
+files return 501 pending protocol verification. Unknown/expired handles return
+404, overlapping downloads 409, and rate-limited lists 429. Failures use
+`{ error }` without upstream URLs, keys, or account data.
+
+The adapter reuses the SDK session and verifies device ownership. It never
+opens a live stream or sends a settings command. Cloud reads do not use P2P;
+any future local adapter must use the existing `media.exclusive` lock.
+See [recordings research](docs/RECORDINGS_RESEARCH.md) for observed responses,
+unsupported cases, and the remaining real-camera acceptance checks. Enabling
+the flag is not evidence that this camera's recordings can be downloaded.

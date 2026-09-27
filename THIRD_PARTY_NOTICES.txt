@@ -1,3 +1,13 @@
+The event-list request fields and event-record schema used by recordings.js,
+along with the previously adapted cellular relay handshake, derive from
+bropat/eufy-security-client at commit
+3bfef130bdcbff8f2f68286a5f63ec7e48177202:
+https://github.com/bropat/eufy-security-client
+Relevant files: src/http/api.ts, src/http/models.ts, src/http/types.ts,
+src/p2p/session.ts and src/p2p/utils.ts.
+The bridge uses @mega-yfue/eufy-sdk's existing authenticated transport and
+media downloader without copying or replacing that package's implementation.
+
 MIT License
 
 Copyright (c) 2021-2024 bropat <patrick.broetto@gmail.com>

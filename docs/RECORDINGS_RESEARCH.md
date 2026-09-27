@@ -1,10 +1,12 @@
 # Saved recordings research — 2026-09-27
 
-Status: **implementation blocked on a verified recordings protocol**. Read-only
-tests against the owner's existing Railway session confirmed camera ownership,
-but did not obtain an event array. This is not evidence that recordings are
-impossible. No recording routes or transport have been added. No production
-deployment, camera command, or new eufy login was made during this investigation.
+Status: **experimental routes and a restricted cloud adapter implemented;
+real-camera acceptance remains blocked on a verified recordings protocol**.
+Read-only tests against the owner's existing Railway session confirmed camera
+ownership, but did not obtain an event array. This is not evidence that
+recordings are impossible. No production deployment, camera command, or new
+eufy login was made during this investigation. The feature remains off by
+default. Do not present the implementation as a working T86P2 recordings path.
 
 ## 1. Actual camera storage
 
@@ -21,6 +23,7 @@ Read-only checks on the running service, with SDK 0.1.2 and its persisted sessio
 | `POST /v3/event/app/get_all_video_record`, owner-camera filter, shared/guest events excluded | SDK returned no array. |
 | `POST /app/house/get_devs_list` on the US house service | Configured camera found; `member.admin_user_id` equals session user ID. No top-level numeric storage-status fields. |
 | `POST /v3/event/app/get_all_video_record`, reference flags and resolved parent/device station filter | HTTP 200, envelope code 0, encrypted string `data` decrypted by SDK to `null`. |
+| `POST /v3/event/app/get_all_history_record`, configured camera and station, shared/guest events excluded | SDK returned `null`, not an event array. |
 
 Each list used a last-24-hours range and `num: 5`, not an account-wide request.
 The third list used `shared: true` only after confirming camera ownership; the
@@ -28,6 +31,12 @@ device filter remained the configured camera. `null` is **not** a verified empty
 event array. No storage classification, timestamp comparison, media URL, or
 download can be derived from these responses. See the sanitized observation
 fixture in `fixtures/recordings-api-observations.json`.
+
+A subsequent read-only inventory check returned numeric parameters 1102=18334,
+1182=0, 1192=8341, and 1193=8068. The SDK dictionary labels these `sdinfo`,
+`devCloudStatus`, `detectedEvents`, and `recordingDays`. These labels and raw
+numbers do not establish the storage location or availability of a particular
+recording; no cloud-subscription or recording-disabled conclusion is drawn.
 
 The pinned reference defines `StorageType` as NONE=0, LOCAL=1, CLOUD=2,
 LOCAL_AND_CLOUD=3 (`src/http/types.ts`). Its event schema contains both
@@ -118,6 +127,12 @@ The v2 and v3 list trials above used this exact SDK transport. Neither produced
 records. A null response must not be silently normalized to a successful empty
 recordings list.
 
+The implemented adapter uses the v3 video endpoint already contacted, with
+`shared: false`, `exclude_guest: true`, and the configured camera/station.
+It returns a sanitized array only for an actual array response; the observed
+null response yields HTTP 502. This is intentionally experimental, not a claim
+that the current official app uses that endpoint successfully.
+
 ### Local download
 
 The cited task's station path needs correction: at this commit `startDownload`
@@ -198,17 +213,18 @@ redirect validation without leaking account headers across origins.
 
 ## 5. Pagination and rate limits
 
-No rate-limit response or continuation token was observed. Three bounded list
-attempts were made; the v3 attempts were separated by more than one minute.
+No rate-limit response or continuation token was observed. Four bounded list
+attempts were made, including the later history check; the repeated v3 video
+attempts were separated by more than one minute.
 The reference defaults `num` to 1000 and sends
 `id: 0`, `id_type: 1`, `pullup: true`; it does not demonstrate continuation
 semantics. These values do not establish the server's maximum page size.
 
-The eventual module should bound date ranges and limits, enforce a minimum
-interval between list attempts including failures, and prevent concurrent
-calls from bypassing that interval. It must not claim a complete day's list
-when a page might have been truncated. Do not discover pagination by making a
-large series of production calls.
+The implemented module bounds date ranges to seven days and limits to 100,
+enforces 60 seconds between list attempts including failures, and rejects
+overlap. A full page sets `possiblyTruncated`; no unsupported continuation
+algorithm is implemented. A large series of production queries was not used
+to discover pagination.
 
 ## 6. Remaining evidence and implementation boundary
 
@@ -223,7 +239,40 @@ lock. Raw SDK logs and errors were suppressed; only selected metadata was
 printed. No session was copied out. Local `ffmpeg` and `ffprobe` are absent from
 PATH; the repository Dockerfile supplies ffmpeg in production.
 
-Next steps once a verified current request shape is available:
+### Implemented independently of account availability
+
+- Authenticated, no-store routes, absent by default; existing routes retain
+  their behavior. No P2P or camera settings APIs are used.
+- Owner/device-scoped listing, strict dates/ranges/limits, rate limiting,
+  secret-free field projection, opaque 15-minute IDs and a bounded 500-entry
+  in-memory lookup cache. No record URLs are accepted from API callers.
+- A restricted cloud download path via the SDK's existing downloader, accepting
+  only records with explicit `cipher_id: 0` and supported security-app HTTPS
+  URLs. The SDK preserves its own DNS, host, redirect and 10 MiB limits.
+  Local records, unknown/encrypted ciphers, direct object-store URLs, and
+  oversized-duration records fail explicitly before download.
+- A second strict 25 MiB output ceiling, `ftyp` check, ffprobe metadata checks,
+  and complete ffmpeg video decoding. Frame rate must be 1–120 fps; duration
+  must not exceed 20.5 seconds; decoded frame count/time are also bounded.
+  The validator rejects video above 4K pixel count, limits output and runtime,
+  disables external MP4 data references, and deletes private temporary files.
+- Docker runtime packaging, README, source attribution, and tests for the
+  captured null response, synthetic record schemas, authentication, flag-off,
+  malformed requests, ownership, concurrency, redaction, byte limits, actual
+  media decoding, and absence of settings/live command references.
+
+New environment variable names: `RECORDINGS_ENABLED`, `FFPROBE_PATH`. No new
+runtime dependencies. Test MP4s are generated synthetic footage, not camera
+footage. Tests against synthetic records do not establish protocol support.
+
+Validation: `npm test` passed all 46 tests in an isolated Node 24 / Debian
+ffmpeg container with networking disabled and no production credentials.
+This includes the full existing suite and actual media decode tests. The
+initial high-fps synthetic fixture was corrected to request its output rate
+explicitly because ffmpeg rounded an input rate of 121 to an output of 120.
+`git diff --check` passed. No production code or feature flag was changed.
+
+### Remaining real-camera work
 
 1. With the owner present, observe the official app listing and playing one
    event on this camera. Retain request shapes only, not tokens or account
@@ -237,16 +286,19 @@ Next steps once a verified current request shape is available:
    decodable frames, 1–120 fps, approximately 20 seconds maximum, and the
    consumer's byte limit. Reject longer recordings or explicitly define a
    bounded excerpt contract; do not silently misreport full-record duration.
-4. Only then implement the flag-gated routes and adapter, captured-fixture,
-   auth, default-off, size, decode, and settings-command regression tests.
-   Include any new runtime modules in the Dockerfile's explicit COPY list.
-   Update the third-party notice if reference structures are incorporated.
+4. Add captured-record fixtures and validate the actual list and download
+   routes against the app. Extend the adapter only with the verified protocol,
+   then repeat the tests and real-camera acceptance checks.
 
-No new runtime dependencies or environment variables were added. `RECORDINGS_ENABLED`
-and the requested endpoints are not implemented by this research commit. No
-real-account recording acceptance checks have passed. Unusable list responses
+No real-account recording acceptance checks have passed. Unusable list responses
 are not a finding that recordings are disabled, encrypted beyond recovery, or
 impossible. No recommendation to alter recording settings is justified.
+
+The current upstream SDK was also inspected at commit
+`52490349627c9a177d87a2b1e67b2b43dd50cbc1`. It still provides no stored-recording
+enumeration/download API. Its on-station database query primitive is not a
+verified T86P2 recording schema or download protocol. The dependency remains
+pinned to 0.1.2.
 
 ## Consumer changes requiring a separate decision
 
