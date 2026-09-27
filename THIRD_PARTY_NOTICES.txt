@@ -30,3 +30,10 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+Saved-recording follow-up (2026-09-27): local 10017 calendar/table structures,
+1024 string download body and 1051 cancellation framing are derived from the
+above MIT reference client. ACK-derived timestamp key selection and the
+T86P2 saved-frame layout were independently verified against the owner device
+and examined app decoder. Key derivation itself reuses the pinned MIT SDK's
+getImageKey export. No proprietary app code or binary is redistributed.

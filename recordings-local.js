@@ -1,7 +1,7 @@
+import { orderedRecordingPackets } from './recordings-transport.js';
 import { MediaError } from './media.js';
 
-// Read-only calendar protocol from bropat/eufy-security-client. The T86P2 returned an
-// empty 10017 response; nonempty rows and downloads remain unverified.
+// Read-only calendar protocol verified against the owner’s T86P2 and iPhone app.
 const DATABASE = 1306;
 const QUERY_LOCAL = 10017;
 
@@ -17,9 +17,9 @@ export function localCalendarQuery(cameraSn, query, timeZone = 'America/Chicago'
   const start = dayAt(query.since, timeZone);
   const last = dayAt(query.until, timeZone);
   const next = new Date(Date.UTC(Number(last.slice(0, 4)), Number(last.slice(4, 6)) - 1, Number(last.slice(6, 8)) + 1));
-  return { count: query.limit, detection_type: 0, device_info: [{ device_sn: cameraSn }],
+  return { count: query.limit, detection_type: 0,
     end_date: next.toISOString().slice(0, 10).replaceAll('-', ''), event_type: 0,
-    flag: 0, res_unzip: 1, start_date: start, start_time: start + '000000',
+    flag: 0, start_date: start, start_time: query.cursor ?? '0',
     storage_cloud: -1, ai_type: 0 };
 }
 
@@ -37,13 +37,15 @@ export async function readLocalRecordingRows({ eufy, media, device, cameraSn }, 
       device?.raw?.member?.admin_user_id !== eufy?.api?.auth?.userId)
     throw new MediaError('Local recordings require the configured camera owner session', 403);
   if (!Number.isFinite(query?.since) || !Number.isFinite(query?.until) ||
-      query.until < query.since || query.until - query.since > 86400000 ||
+      query.until < query.since || query.until - query.since > 7 * 86400000 ||
       !Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100)
     throw new MediaError('Invalid local recording query', 400);
   const router = eufy.p2p;
   const parent = router.stationKeyOf(cameraSn);
   // Do not broaden a camera-scoped request to a shared HomeBase.
   if (parent !== cameraSn) throw new MediaError('Local recordings require a standalone camera', 501);
+  if (query.cursor !== undefined && !/^(?:0|\d{14})$/.test(query.cursor))
+    throw new MediaError('Invalid recording cursor', 400);
   const body = localCalendarQuery(cameraSn, query, timeZone);
   return media.exclusive(async () => {
     signal.throwIfAborted();
@@ -68,10 +70,10 @@ export async function readLocalRecordingRows({ eufy, media, device, cameraSn }, 
       if (!session?.isConnected) throw new MediaError('Local recordings connection is not ready', 503);
       stage = 'calendar query';
       return await new Promise((resolve, reject) => {
-        let settled = false;
+        let settled = false; let packets;
         const finish = (error, rows) => {
           if (settled) return;
-          settled = true;
+          settled = true; packets?.close();
           session.off('data', onData);
           session.off('dbChunk', onChunk);
           session.off('error', onError);
@@ -116,6 +118,7 @@ export async function readLocalRecordingRows({ eufy, media, device, cameraSn }, 
             return finish(new MediaError('Camera returned an invalid or out-of-scope recording calendar'));
           finish(null, rows);
         };
+        if (typeof session.onData === 'function') packets = orderedRecordingPackets(session, error => finish(error), 2);
         session.on('data', onData);
         session.on('dbChunk', onChunk);
         session.on('error', onError);

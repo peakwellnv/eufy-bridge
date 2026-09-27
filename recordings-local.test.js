@@ -23,8 +23,8 @@ function setup(ensure) {
 test('calendar uses the camera civil day across the UTC date boundary', () => {
   const body = localCalendarQuery('CAMERA', query);
   assert.equal(body.start_date, '20260927'); assert.equal(body.end_date, '20260928');
-  assert.equal(body.start_time, '20260927000000');
-  assert.deepEqual(body.device_info, [{ device_sn: 'CAMERA' }]);
+  assert.equal(body.start_time, '0'); // First page, not midnight: captured from the iPhone app.
+  assert.equal(body.device_info, undefined); assert.equal(body.res_unzip, undefined);
 });
 
 test('waits for the completed handshake and holds the existing media lock', async () => {

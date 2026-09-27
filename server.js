@@ -122,8 +122,8 @@ mountRecordings(app, process.env.RECORDINGS_ENABLED === 'true' ? new Recordings(
   const cameraSn = process.env.EUFY_CAMERA_SN;
   if (!cameraSn) throw new MediaError('EUFY_CAMERA_SN is not configured', 503);
   const devices = await eufy.getDevices();
-  return { api: eufy.api, cameraSn, device: devices.find(device => device.sn === cameraSn) };
-}) : null, process.env.RECORDINGS_ENABLED === 'true');
+  return { eufy, media, api: eufy.api, cameraSn, device: devices.find(device => device.sn === cameraSn) };
+}, { timeZone: process.env.RECORDINGS_TIME_ZONE || 'America/Chicago' }) : null, process.env.RECORDINGS_ENABLED === 'true');
 
 app.get("/verify", (req, res) => {
   if (!checkVerifyToken(req, res)) return;

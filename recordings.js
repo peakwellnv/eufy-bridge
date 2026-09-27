@@ -1,3 +1,6 @@
+import { downloadLocalRecording } from './recordings-download.js';
+import { readLocalRecordingRows } from './recordings-local.js';
+import { normalizeLocalRecording, recordingCivilTime, localRecordingEpoch } from './recordings-metadata.js';
 import { createHmac, randomBytes } from 'node:crypto';
 import { MediaError } from './media.js';
 import { checkRecordingBytes, validateRecordingMp4 } from './recordings-mp4.js';
@@ -44,13 +47,13 @@ export function parseRecording(record, cameraSn, id) {
     durationSeconds: end - start, storage: record.storage_type === 1 ? 'local' : 'cloud', eventType: record.video_type };
 }
 
-/** Read-only SDK wrapper. No camera API, live stream, or settings transport is used.
- * The current account returns null from the event endpoint; that is a failure,
- * not evidence of an empty day. See docs/RECORDINGS_RESEARCH.md.
- */
+/** Saved-recording SDK wrapper. Local calendar access shares the existing media lock. */
 export class Recordings {
-  constructor(getContext, { now = Date.now, validateMp4 = validateRecordingMp4 } = {}) {
+  constructor(getContext, { now = Date.now, validateMp4 = validateRecordingMp4, readLocal = readLocalRecordingRows, downloadLocal = downloadLocalRecording, timeZone = 'America/Chicago' } = {}) {
     this.getContext = getContext;
+    this.readLocal = readLocal;
+    this.downloadLocal = downloadLocal;
+    this.timeZone = timeZone;
     this.now = now;
     this.validateMp4 = validateMp4;
     this.nextListAt = 0;
@@ -71,14 +74,23 @@ export class Recordings {
 
   async listRecordings(options = {}) {
     const now = this.now();
-    const query = recordingQuery(options, now);
+    const dated = { ...options };
+    for (const name of ['since', 'until']) if (typeof dated[name] === 'string' && /^\d{4}-\d\d-\d\d$/.test(dated[name])) {
+      try { dated[name] = new Date(localRecordingEpoch(dated[name] + ' 00:00:00', this.timeZone) * 1000).toISOString(); }
+      catch { throw new MediaError(`${name} is not a valid camera-local date`, 400); }
+    }
+    const query = recordingQuery(dated, now);
     if (this.listing || now < this.nextListAt)
       throw new MediaError('Recording lists are limited to one request per minute', 429);
     this.nextListAt = now + RECORDINGS_LIST_INTERVAL_MS;
     this.listing = true;
     try {
-      const { api, device, cameraSn } = await this.context();
-      const rows = await api.securityAppPost(EVENT_PATH, {
+      const context = await this.context();
+      const { api, device, cameraSn } = context;
+      const local = !!context.eufy;
+      const rows = local ? (await this.readLocal(context, { ...query,
+        cursor: recordingCivilTime(query.until + 1000, this.timeZone).replace(/[- :]/g, '') },
+        { timeZone: this.timeZone })).map(row => normalizeLocalRecording(row, cameraSn, this.timeZone)) : await api.securityAppPost(EVENT_PATH, {
         device_sn: cameraSn, station_sn: device.stationSn || cameraSn,
         start_time: Math.floor(query.since / 1000), end_time: Math.floor(query.until / 1000),
         exclude_guest: true, house_id: 'HOUSEID_ALL_DEVICE', id: 0, id_type: 1,
@@ -89,7 +101,7 @@ export class Recordings {
         throw new MediaError('Recordings API returned no event array; saved recordings are not yet available', 502);
       if (rows.length > query.limit) throw new MediaError('Recordings API exceeded the requested limit');
       const pending = new Map();
-      const metadata = rows.map(row => {
+      const metadata = rows.filter(row => !local || row.start_time * 1000 >= query.since && row.start_time * 1000 <= query.until).map(row => {
         const id = createHmac('sha256', this.key).update(JSON.stringify([
           cameraSn, row.monitor_id, row.start_time, row.end_time, row.storage_type,
         ])).digest('hex');
@@ -98,7 +110,7 @@ export class Recordings {
           throw new MediaError('Recordings API returned an event outside the requested range');
         if (pending.has(id)) throw new MediaError('Recordings API returned duplicate events');
         pending.set(id, { cameraSn, ownerId: api.auth.userId, expiresAt: this.now() + CACHE_TTL_MS,
-          storage: result.storage, cipherId: row.cipher_id,
+          storage: result.storage, cipherId: row.cipher_id, localRow: local ? row : undefined,
           url: row.cloud_path || row.storage_path, durationSeconds: result.durationSeconds });
         return result;
       });
@@ -106,7 +118,7 @@ export class Recordings {
       for (const [id, record] of this.records) if (record.expiresAt <= now) this.records.delete(id);
       for (const [id, record] of pending) this.records.set(id, record);
       while (this.records.size > 500) this.records.delete(this.records.keys().next().value);
-      // Pagination is unverified; explicitly report when this page may be truncated.
+      // A full descending page may have older records; expose that explicitly.
       return { recordings: metadata, possiblyTruncated: rows.length === query.limit };
     } catch (error) {
       if (error instanceof MediaError) throw error;
@@ -124,9 +136,12 @@ export class Recordings {
     if (this.downloading) throw new MediaError('A recording download is already in progress', 409);
     this.downloading = true;
     try {
-      const { api, cameraSn } = await this.context();
+      const context = await this.context();
+      const { api, cameraSn } = context;
       if (cameraSn !== record.cameraSn || api.auth.userId !== record.ownerId)
         throw new MediaError('Unknown recording', 404);
+      if (record.storage === 'local' && record.localRow)
+        return await this.validateMp4(await this.downloadLocal(context, record.localRow), { expectedFrames: record.localRow.frame_num });
       if (record.storage === 'local')
         throw new MediaError('Local recording download is not verified for this camera', 501);
       if (record.cipherId !== 0)
@@ -145,7 +160,7 @@ export class Recordings {
       return await this.validateMp4(bytes);
     } catch (error) {
       if (error instanceof MediaError) throw error;
-      throw new MediaError('Recording download failed; the SDK transport also limits downloads to 10 MB');
+      throw new MediaError('Recording download failed');
     } finally { this.downloading = false; }
   }
 }

@@ -68,38 +68,43 @@ seekable H.264/AAC MP4 for WhatsApp. Clips remain bounded to 2–20 seconds.
 Conversion uses a private temporary directory that is removed on completion or
 failure. Existing `/clip` callers retain their original recording format.
 
-## Saved recordings (experimental, off by default)
+## Saved recordings (off by default)
 
-`RECORDINGS_ENABLED` enables two read-only endpoints only when set to `true`.
-Both use the existing bearer authentication and `Cache-Control: no-store`.
-With the flag absent or off, authenticated requests return 404.
+Set `RECORDINGS_ENABLED=true` to mount the authenticated read-only endpoints.
+With the flag absent or off, authenticated requests return 404. Both enabled
+routes use the existing bearer middleware and `Cache-Control: no-store`.
 
-- `GET /recordings?since=<ISO>&until=<ISO>&limit=<n>` returns
-  `{ recordings: [{ id, startedAt, endedAt, durationSeconds, storage, eventType }],
-  possiblyTruncated }`. Dates accept `YYYY-MM-DD` (UTC) or a timestamp with a
-  timezone. Defaults are the last 24 hours and 20 records; maximums are seven
-  days and 100 records. List attempts, including failures, are limited to one
-  per minute. A full page sets `possiblyTruncated`; pagination is not verified.
-- `GET /recording/<id>` accepts an opaque handle from a successful list and
-  returns `video/mp4`. Handles expire after 15 minutes or process restart.
-  Output must be smaller than 25 MiB, have decodable video at 1–120 fps, and
-  last at most approximately 20 seconds (20.5 seconds of timestamp tolerance).
-  Longer events are rejected, not silently trimmed. Validation uses ffmpeg and
-  ffprobe; the additional executable override is `FFPROBE_PATH`.
+- `GET /recordings?since=<ISO>&until=<ISO>&limit=<n>` returns safe metadata and
+  opaque IDs: `{ recordings: [{ id, startedAt, endedAt, durationSeconds, storage,
+  eventType }], possiblyTruncated }`. Defaults: last 24 hours, 20 events. Maximum:
+  seven days, 100 events. Lists, including failures, are limited to once per minute.
+  Date-only inputs use the camera's timezone, configured by `RECORDINGS_TIME_ZONE`
+  (default `America/Chicago`); timestamp inputs require an explicit timezone.
+  Results are newest first. A full page sets `possiblyTruncated`; to request an
+  older page, use an `until` timestamp earlier than the oldest returned event.
+- `GET /recording/<id>` returns a portable H.264 MP4 with video only. IDs expire
+  after 15 minutes or restart. Downloads must be under 25 MiB and at most 20.5
+  seconds, with fully decodable 1–120 fps video. Longer recordings are rejected
+  rather than trimmed. ffmpeg and ffprobe validate every result; executable
+  overrides are `FFMPEG_PATH` and `FFPROBE_PATH`.
 
-**This camera's saved recordings are not yet available through these routes.**
-Real-account video and history requests currently return `null`, which the
-adapter reports as HTTP 502 rather than an empty day. The implemented download
-path supports only explicitly unencrypted cloud records whose URLs the SDK
-already permits. It retains the SDK's stricter 10 MiB download limit, host
-allowlist, redirect rules, and timeout. Local P2P downloads and encrypted cloud
-files return 501 pending protocol verification. Unknown/expired handles return
-404, overlapping downloads 409, and rate-limited lists 429. Failures use
-`{ error }` without upstream URLs, keys, or account data.
+The verified T86P2 path reads local saved recordings using calendar command
+10017 and download command 1024. It decrypts saved H.265 keyframes using the
+camera's download acknowledgment, checks the listed frame count and actual
+transfer completion, then converts to MP4. It does not start live video. Both
+P2P operations hold `media.exclusive`; a busy camera returns 409. A download
+closes its P2P session before releasing the lock. The feature retains the
+existing account session and sends no camera setting commands.
 
-The adapter reuses the SDK session and verifies device ownership. It never
-opens a live stream or sends a settings command. Cloud reads do not use P2P;
-any future local adapter must use the existing `media.exclusive` lock.
-See [recordings research](docs/RECORDINGS_RESEARCH.md) for observed responses,
-unsupported cases, and the remaining real-camera acceptance checks. Enabling
-the flag is not evidence that this camera's recordings can be downloaded.
+Verified on the owner's September 27, 2026, 3:22:34 PM CDT recording: all 158
+frames retrieved and a fully decoded 1.88 MB MP4 produced. Cellular timeouts
+remain possible; incomplete or corrupt transfers fail instead of returning
+partial footage. Unsupported cameras, storage/encryption formats, or oversized
+recordings fail explicitly. The cloud event endpoint returned null for this
+account and is not the verified path. No consumer sampling behavior changes.
+
+Errors use `{ error }`: unknown/expired ID 404, occupied media 409, oversized
+clip 413, list rate limit 429, unsupported format 501, failed transfer 502,
+and timeout 504. Upstream paths, IDs, account data and keys are never returned.
+See [recordings research](docs/RECORDINGS_RESEARCH.md) for protocol evidence,
+limitations, historical diagnostics, and deployment status.

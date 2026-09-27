@@ -152,11 +152,28 @@ test('25 MB ceiling is checked before decoding; truncated/non-MP4 bytes are reje
 });
 
 test('recordings module has no SDK settings or live-camera command references', () => {
-  const source = readFileSync(new URL('./recordings.js', import.meta.url), 'utf8');
+  const source = ['recordings.js', 'recordings-local.js', 'recordings-download.js', 'recordings-transport.js'].map(file => readFileSync(new URL(file, import.meta.url), 'utf8')).join('\n');
   const commands = readFileSync(new URL('./node_modules/@mega-yfue/eufy-sdk/dist/transport/p2p/commands.d.ts', import.meta.url), 'utf8');
   const settings = [...commands.matchAll(/\bCMD_[A-Z0-9_]+/g)].map(match => match[0])
     .filter(name => /SET|SWITCH|ENABLE|DISABLE|FORMAT|REBOOT|DELETE/.test(name));
   assert.ok(settings.length > 0);
   for (const name of settings) assert.equal(source.includes(name), false, name);
   assert.doesNotMatch(source, /\.setDetection\(|\.live\(|\.snapshotLive\(|\.recordFragments\(|\.sendCommand\(/);
+});
+
+test('verified local list uses the CDT day and never exposes paths or key material', async () => {
+  const captured = JSON.parse(readFileSync(new URL('./fixtures/recording-local-captured.json', import.meta.url), 'utf8'));
+  const cameraSn = captured.device_sn, api = { auth: { userId: 'OWNER' } };
+  const context = { api, cameraSn, eufy: {}, device: { sn: cameraSn, raw: { member: { admin_user_id: 'OWNER' } } } };
+  let query, downloaded;
+  const recordings = new Recordings(async () => context, { now: () => Date.parse('2026-09-27T22:00:00Z'),
+    readLocal: async (_, q) => { query = q; return [captured]; },
+    downloadLocal: async (_, row) => { downloaded = row; return fakeMp4; }, validateMp4: async bytes => bytes });
+  const result = await recordings.listRecordings({ since: '2026-09-27', limit: 1 });
+  assert.equal(query.since, Date.parse('2026-09-27T05:00:00Z'));
+  assert.equal(result.recordings[0].startedAt, '2026-09-27T20:22:34.000Z');
+  assert.equal(result.recordings[0].storage, 'local');
+  assert.doesNotMatch(JSON.stringify(result), /PATH_REDACTED|CAMERA_REDACTED|OWNER|cipher|storage_path/);
+  assert.deepEqual(await recordings.downloadRecording(result.recordings[0].id), fakeMp4);
+  assert.equal(downloaded.storage_path, captured.storage_path);
 });

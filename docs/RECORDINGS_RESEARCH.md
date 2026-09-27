@@ -1,5 +1,146 @@
 # Saved recordings research — 2026-09-27
 
+Status: **real listing, saved transfer, decryption and MP4 validation passed**.
+The branch implements the verified local path. Production remains on its prior
+build with the feature off; validation ran within the existing process's media
+lock, with no login, deployment, setting change or session export.
+
+## 1. Actual storage and matching recording
+
+The owner's T86P2 returned `storage_type: 1`, `storage_cloud: 0` for both a
+16:23:44 event and the owner's exact known playable event:
+**2026-09-27 15:22:34–15:22:44 CDT (20:22:34–20:22:44 UTC)**.
+This proves local camera storage for these events, not cloud storage. The latter
+row reports `frame_num: 158`, `cipher_id: 0`, `video_type: 2`. A captured,
+explicitly redacted fixture is `fixtures/recording-local-captured.json` at the
+repository root. Serial, path and recording ID are replaced, and account fields
+are omitted. No captured video or key is committed.
+
+## 2. Verified requests and pagination
+
+With the owner's explicit permission, 55 seconds of iPhone Eufy control traffic
+were filtered to the Eufy process, transferred directly into the existing
+Railway container, and decoded in memory against its session. No raw capture
+was written; media and other apps' traffic were excluded. The working app uses
+an AES-128-ECB level-1 command 1350 envelope:
+
+```json
+{
+  "cmd": 1306,
+  "account_id": "REDACTED_OWNER",
+  "payload": {
+    "cmd": 10017,
+    "table": "history_record_info",
+    "transaction": "REDACTED",
+    "payload": {
+      "count": 20,
+      "start_date": "20260927",
+      "end_date": "20260928",
+      "start_time": "0",
+      "event_type": 0,
+      "ai_type": 0,
+      "storage_cloud": -1,
+      "detection_type": 0,
+      "flag": 0
+    }
+  }
+}
+```
+
+The phone also sent a numeric `trigger_type`; its value was not retained.
+The successful bridge query omits it, `device_info`, and `res_unzip`. The SDK
+adds its existing channel fields. Crucially, `start_time` is a descending
+pagination cursor: **`"0"` starts the first page; midnight does not**. The
+phone's subsequent cursors included `20260927160917` and `20260927155935`.
+The targeted bridge cursor `20260927152235` returned the 15:22:34 event.
+Command 1306 replies with `cmd: 10017`, `mIntRet: 0`, and table wrappers:
+`data: [{ table_name: "history_record_info", payload: [record, ...] }]`.
+The implementation verifies standalone camera ownership and every row's device
+and station serial before projecting metadata. Civil dates use America/Chicago
+by default; ambiguous DST timestamps fail explicitly.
+
+Saved download uses **1024**, not live-stream command 1003. Its level-1-encrypted
+body is five zero bytes, the saved `storage_path` padded to 128-byte blocks,
+and the similarly padded owner ID. The camera acknowledges command 1024 with
+result code 0 followed by a 32-byte timestamp field. Command 1303 announces the
+transfer; binary channel 3 carries video 1300 and audio 1301; command 1304
+confirms completion. Cancellation uses 1051. The exact phone download request
+was not recovered from the bounded capture; this download sequence was instead
+validated directly against the known owner recording and app decoder.
+
+## 3. Encryption and packet completeness
+
+**Cipher ID 0 does not mean plaintext video.** The key is derived from camera
+serial, P2P DID, and the ten-digit timestamp in the **download acknowledgment**.
+It is not the event's timestamp. Static examination of the app decoder's
+`zx_p2p_download_set_ts`/`gen_pic_code_v1` confirmed this derivation. The pinned
+SDK already exports the same `getImageKey` primitive; use the first 16 ASCII
+bytes of its uppercase hexadecimal result as the AES-128-ECB key. Sign-1
+saved-video frames encrypt their first 128 media bytes, following the 22-byte
+frame header. The remainder is clear H.265. This format does not carry the
+RSA envelope assumed by the SDK's live-video decoder. No cloud cipher lookup
+is necessary for this verified path. The exploratory cipher-0 lookup returned
+no key. Keys stay in memory and never enter logs or API responses.
+
+SDK 0.1.2 discards reordered datagrams and split frame headers. That yielded
+missing keyframes and, later, one missing reference frame despite a successful
+finish notification. The scoped adapter acknowledges, deduplicates and orders
+packets, and reconstructs complete headers and payloads with bounded buffers.
+It changes only the session instance under the bridge media lock, then restores
+its handlers. Downloads require the real finish, the complete listed frame
+count, no pending packets, increasing timestamps, and a clean full decode.
+Timeouts cancel and close the session before releasing exclusivity.
+
+The returned MP4 is video-only H.264, converted from complete H.265 frames.
+Frame timestamps determine the rate because this camera reports header FPS 0.
+Audio was observed but audio decryption/muxing is outside the verified adapter.
+
+## 4. Hosts and limits
+
+The verified recording listing and download use the SDK's existing P2P relay
+transport; no recording HTTP URL, object store or new hostname is contacted.
+Relay addresses are dynamically supplied by the existing cellular lookup,
+not an added media allowlist. Their exact ephemeral IPs were not retained in
+the sanitized validation output. Exploratory HTTP requests used
+`security-app.eufylife.com` and `mysecurity.eufylife.com`; the historical log
+below distinguishes their results. Railway's existing CLI/SSH service carried
+validation control. No HTTP download allowlist was widened.
+
+One list attempt per minute; at most seven requested days and 100 rows. Full
+pages are explicitly marked as possibly truncated. Use an earlier `until` to
+page backward. Download input and output stay below 25 MiB; recordings longer
+than 20.5 seconds are rejected. The adapter requires the owner standalone T86P2,
+local storage, cipher 0 and the verified H.265 frame form. Other formats fail
+explicitly. The lossy cellular connection can still time out; this is not a
+claim of guaranteed availability.
+
+## 5. Real validation and release boundary
+
+The actual implemented class listed the owner's 15:22:34 event, received
+**158/158 video frames**, confirmed transfer completion with no pending bytes,
+and observed a **10,459 ms** first-to-last-frame timestamp span. It returned
+**1,880,645 bytes**, `ftyp` at offset 4, and passed ffprobe plus full ffmpeg
+validation. Unlike the earlier diagnostic mux, this validation rejects decoder
+error output as well as nonzero exit codes. The bridge remained ready, not busy,
+in the same process; the temporary inspector was closed after each check.
+
+The actual HTTP handlers were also mounted temporarily on a loopback-only
+listener using the running owner session: unauthorized list returned 401;
+authorized list returned 200 and the matching timestamp; download returned
+200, `video/mp4`, `Cache-Control: no-store`, and the same validated MP4.
+ffprobe reported 1280×720, rate `157000/10459` (about 15.011 fps), and duration
+10.526 seconds. The listener was removed after validation. One earlier HTTP
+attempt correctly returned 504 on a cellular calendar timeout. The isolated
+Node 24/ffmpeg suite passes 68 tests, including off-by-default real-server routes.
+
+The feature remains opt-in and off by default. No main merge, deployment or
+production flag change has been performed. Neither Sage consumer was changed.
+The historical failures below are preserved as an audit trail, not the current
+status. In particular, prior empty local lists were caused by the wrong cursor,
+and the initial cloud-only limitation has been superseded.
+
+# Historical investigation log (superseded by the verified findings above)
+
 Status: **experimental routes and a restricted cloud adapter implemented;
 real-camera acceptance remains blocked on a verified recordings protocol**.
 Read-only tests against the owner's existing Railway session confirmed camera

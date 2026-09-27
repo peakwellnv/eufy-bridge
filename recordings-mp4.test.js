@@ -16,7 +16,8 @@ function clip({ seconds = 1, rate = 15, audioOnly = false } = {}) {
 
 test('real MP4 decoding accepts bounded video and rejects false signatures and truncation', async () => {
   const bytes = clip();
-  assert.deepEqual(await validateRecordingMp4(bytes), bytes);
+  assert.deepEqual(await validateRecordingMp4(bytes, { expectedFrames: 15 }), bytes);
+  await assert.rejects(validateRecordingMp4(bytes, { expectedFrames: 16 }), /every saved video frame/);
   await assert.rejects(validateRecordingMp4(Buffer.from('0000ftyp0000000000000000')));
   await assert.rejects(validateRecordingMp4(bytes.subarray(0, bytes.length - 100)));
 });

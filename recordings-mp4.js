@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { mkdtemp, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { MediaError } from './media.js';
@@ -19,11 +19,12 @@ export function checkRecordingBytes(bytes) {
 
 function run(executable, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(executable, args, { stdio: ['ignore', 'pipe', 'ignore'] });
+    const child = spawn(executable, args, { stdio: ['ignore', 'pipe', 'pipe'] });
     const chunks = []; let size = 0; let failure;
     const fail = error => { failure ??= error; child.kill('SIGKILL'); };
     const timer = setTimeout(() => fail(new MediaError('Recording validation timed out', 504)), 25000);
     child.on('error', () => { failure ??= new MediaError('Recording validator unavailable', 503); });
+    child.stderr.on('data', () => fail(new MediaError('Recording could not be decoded cleanly')));
     child.stdout.on('data', chunk => {
       size += chunk.length;
       if (size > 256 * 1024) fail(new MediaError('Recording validation output exceeded limit'));
@@ -39,7 +40,7 @@ function run(executable, args) {
 }
 
 /** Validate the entire clip, not merely an ftyp signature or the first frame. */
-export async function validateRecordingMp4(bytes) {
+export async function validateRecordingMp4(bytes, { expectedFrames } = {}) {
   checkRecordingBytes(bytes);
   const directory = await mkdtemp(join(tmpdir(), 'eufy-recording-'));
   const file = join(directory, 'recording.mp4');
@@ -74,6 +75,26 @@ export async function validateRecordingMp4(bytes) {
     if (!frames.length || Math.max(...frames) < 1 || Math.max(...frames) > 120 * MAX_SECONDS ||
         !times.length || Math.max(...times) > MAX_SECONDS)
       throw new MediaError('Recording has no bounded decodable video');
+    if (expectedFrames !== undefined && Math.max(...frames) !== expectedFrames)
+      throw new MediaError('MP4 does not contain every saved video frame');
+    return bytes;
+  } finally { await rm(directory, { recursive: true, force: true }); }
+}
+
+/** Convert verified complete H.265 saved frames into a portable, video-only MP4. */
+export async function muxSavedRecording(annexb, fps) {
+  if (!Buffer.isBuffer(annexb) || !annexb.length || annexb.length >= RECORDING_MAX_BYTES ||
+      !Number.isFinite(fps) || fps < 1 || fps > 120) throw new MediaError('Invalid saved video bounds');
+  const directory = await mkdtemp(join(tmpdir(), 'eufy-recording-mux-'));
+  try {
+    const input = join(directory, 'source.hevc'), output = join(directory, 'saved.mp4');
+    await writeFile(input, annexb, { mode: 0o600 });
+    await run(process.env.FFMPEG_PATH || 'ffmpeg', ['-nostdin', '-hide_banner', '-loglevel', 'error',
+      '-xerror', '-err_detect', 'explode', '-protocol_whitelist', 'file', '-f', 'hevc', '-r', String(fps),
+      '-i', input, '-map', '0:v:0', '-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '23',
+      '-pix_fmt', 'yuv420p', '-fps_mode', 'passthrough', '-movflags', '+faststart', '-fs', String(RECORDING_MAX_BYTES), output]);
+    const bytes = await readFile(output);
+    checkRecordingBytes(bytes);
     return bytes;
   } finally { await rm(directory, { recursive: true, force: true }); }
 }
