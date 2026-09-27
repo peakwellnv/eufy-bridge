@@ -5,7 +5,7 @@ real-camera acceptance remains blocked on a verified recordings protocol**.
 Read-only tests against the owner's existing Railway session confirmed camera
 ownership, but did not obtain an event array. This is not evidence that
 recordings are impossible. No feature deployment or new eufy login was made. Later bounded P2P
-connection probes failed before the calendar query; see the follow-up below,
+probes reached the calendar query but did not return records; see the follow-up below,
 including a diagnostic-cleanup incident that restarted the bridge. The feature remains off by
 default. Do not present the implementation as a working T86P2 recordings path.
 
@@ -320,10 +320,12 @@ including `main.b92d60ec.chunk.js` and `26.5a1e15b6.chunk.js`. This establishes
 - Web requests use `App-Name: eufy_security`, `Model_type: WEB`, `Web-Country`,
   the existing account token/gtoken, and ECDH encryption/signature headers.
   Changing the SDK request's application identity returned HTTP 401.
-  Exchanging a key using that identity returned HTTP 403. Reproducing the
-  public portal's separate bootstrap protocol also returned HTTP 403, including
-  with its exact exchange header shape and ordinary web-origin headers. The
-  reason for rejection is **unconfirmed**; this does not prove token expiry,
+  The initial bootstrap probe returned HTTP 403 because it accidentally sent
+  duplicate replay headers (`X-Replay-Info` and `x-replay-info`). After fixing
+  the probe, the public WEB key exchange succeeded with HTTP 200/code 0 both
+  locally and from Railway. The subsequent authenticated event request with
+  the existing session still returned HTTP 401. The reason is **unconfirmed**;
+  this does not prove token expiry,
   lack of a subscription, or unavailable recordings. No login was attempted.
 - For applicable encrypted cloud records, the portal decodes `extra` and sends
   `POST /v3/web/cipher/dec_aes_keys` with `user_id` and a `cipher_keys` array.
@@ -342,7 +344,10 @@ A read-only local calendar probe was prepared from the reference's
 `CMD_DATABASE_QUERY_BY_DATE` (10006), nested under database command 1306,
 for `history_record_info`, configured-device scope, and a five-record cap.
 Two attempts used the **running bridge's existing `media.exclusive` lock**.
-Both failed while opening the P2P session, before `queryDatabase` was reached;
+Both failed before `queryDatabase` was reached; a later source audit showed
+that `openStation()` starts a handshake but does not await connection. The
+probe must use `ensureStation()` before sending the query. Consequently these
+initial failures do not establish a transport failure. In those attempts,
 no recording database reply was received. The first had a 20-second cap; the
 second had a 35-second cap and returned an SDK error before that cap. Its exact
 cause was not retained, so it must not be described as a proven network timeout
@@ -357,7 +362,11 @@ inspector evaluation context. Node rejected that with
 `ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`; the unhandled rejection caused three
 bridge restarts, including the preliminary scope check. Railway restarted the
 service and it returned to authenticated/ready state. The debugger was confirmed
-closed. This method was stopped and must not be reused. No session file was
+closed. That cleanup implementation was stopped and must not be reused. A replacement
+uses synchronous `process.getBuiltinModule("inspector").close()` and was tested
+through three isolated Node 24 success/failure cycles before further live use.
+Subsequent live checks verified an unchanged process start time, a closed
+inspector, and a ready bridge after cleanup. No session file was
 copied or printed, no feature flag was enabled, and no feature build was deployed.
 The saved session was reused by normal bridge startup; no new login was requested
 by the probe. These restarts were an operational side effect, not a successful
@@ -366,6 +375,54 @@ validation and not an intentional deployment.
 The follow-up still does **not** meet the real-recording acceptance criteria.
 The next missing evidence is the successful app's list/playback request sequence
 for this camera. No claim that cloud videos are accessible is justified.
+
+## Subsequent bounded protocol checks
+
+`recordings-local.js` is an experimental, unmounted calendar adapter using
+10017. It is not a working download implementation. It verifies
+owner and standalone camera scope, acquires the existing media lock, awaits
+`ensureStation()`, permits one cold-connection retry under the same 35-second
+deadline, and closes only a session it created. Tests cover ownership, foreign
+rows, cancellation, listener cleanup, the media lock, and civil dates in
+`America/Chicago` (the owner's app uses CDT).
+
+A calendar request reached the camera. A second diagnostic used empty
+`device_info` only after verifying that the station is the configured standalone
+owner camera; this matches a successful HB3 reference probe but does not prove
+T86P2 compatibility. Numeric frame metadata showed command 1350 acknowledgment,
+gateway info 1100, and command 6053. No 1306 database frame or `dbChunk` arrived
+before the bounded timeout. A subsequent 10006 acknowledgment decoded to
+result code 0, still without a database reply. Thus a missing JSON decoder alone
+does not explain those attempts. Busy responses were respected and did not send calendar commands.
+
+The alternate read-only local query 10017 **did** return command 1306, sign 0,
+JSON `cmd: 10017`, `mIntRet: 0`, and an empty data list. This occurred both with
+an empty device filter for today's civil day and with the exact configured
+camera filter for September 26–27. Response fields were `start_id`, `end_id`,
+`data`, `transaction`, `table`, `cmd`, `mIntRet`, `version`, and `msg`.
+Unlike cloud `null`, this is a successful empty database response, but it does
+not explain the recordings visible in the owner's iPhone app. This legacy
+command returns table wrappers (`table_name`/`payload`) for nonempty data, not
+the flat 10006 row shape; synthetic tests are labeled accordingly.
+
+A separate HTTP request with storage 1, the configured camera, a five-record cap,
+and today's CDT boundary/offset also returned decrypted `null`. No saved video
+has yet been retrieved. These observations are not evidence of an empty camera
+or a permanent inability to retrieve recordings.
+
+The read-only day query 10008 returned 13 entries, including September 27,
+each with `count: 1`. It also returned dates preceding the requested September
+20 boundary. Therefore the values may be presence flags and the date filter
+cannot be assumed enforced. The camera has a recordings day index even though
+the local row query is empty. The owner identified a playable iPhone recording
+at **2026-09-27 15:22:34 CDT = 20:22:34 UTC**; no bridge result has matched it yet.
+The SDK basic history read 10000 acknowledged code 0 without a database reply;
+combined query 10009 returned `mIntRet: -1006` (meaning unconfirmed). These are
+read-only database operations, not settings commands. Sanitized observations
+are in `fixtures/recordings-local-observations.json`.
+
+The expanded suite passes **57 tests** in isolated Node 24 with ffmpeg. This
+verifies implementation guards, not the missing actual recording/download.
 
 ## Consumer changes requiring a separate decision
 
