@@ -65,5 +65,20 @@
       "shared": false,
       "exclude_guest": true
     }
-  ]
+  ],
+  "followUp": {
+    "appTimezone": "CDT",
+    "storageConfirmed": false,
+    "sdkCloudFilterResult": null,
+    "securityApplicationListHttpStatus": 401,
+    "webKeyExchangeHttpStatus": 403,
+    "p2pProbeCount": 2,
+    "p2pQuerySent": false,
+    "p2pRecordsReceived": 0,
+    "diagnosticCleanupError": "ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING",
+    "bridgeRestarts": 3,
+    "debuggerClosed": true,
+    "featureDeployed": false,
+    "recordingDownloaded": false
+  }
 }

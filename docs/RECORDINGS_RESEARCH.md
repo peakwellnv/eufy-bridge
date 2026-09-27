@@ -4,8 +4,9 @@ Status: **experimental routes and a restricted cloud adapter implemented;
 real-camera acceptance remains blocked on a verified recordings protocol**.
 Read-only tests against the owner's existing Railway session confirmed camera
 ownership, but did not obtain an event array. This is not evidence that
-recordings are impossible. No production deployment, camera command, or new
-eufy login was made during this investigation. The feature remains off by
+recordings are impossible. No feature deployment or new eufy login was made. Later bounded P2P
+connection probes failed before the calendar query; see the follow-up below,
+including a diagnostic-cleanup incident that restarted the bridge. The feature remains off by
 default. Do not present the implementation as a working T86P2 recordings path.
 
 ## 1. Actual camera storage
@@ -299,6 +300,72 @@ The current upstream SDK was also inspected at commit
 enumeration/download API. Its on-station database query primitive is not a
 verified T86P2 recording schema or download protocol. The dependency remains
 pinned to 0.1.2.
+
+## Follow-up: official portal and live validation
+
+The owner confirmed the app uses **CDT (UTC−05:00)**. Its September 27 day
+starts at `2026-09-27T05:00:00Z`. The app did not show the recording source.
+The earlier last-24-hours queries covered that interval, but no record was
+returned to compare with the app. Actual storage remains unconfirmed.
+
+The public [Eufy web portal](https://mysecurity.eufylife.com/) was inspected,
+including `main.b92d60ec.chunk.js` and `26.5a1e15b6.chunk.js`. This establishes
+**published web-client behavior**, not a captured mobile-app request sequence:
+
+- It lists `POST /v3/event/app/get_all_video_record` with `device_sn`, epoch
+  seconds `start_time`/`end_time`, `offset` in **seconds**, `id: 0`, `num`,
+  `pullup: true`, `shared: true`, and `storage: 2` for cloud events. A scoped
+  trial with the configured camera, `num: 5`, UTC offset zero, and the SDK's
+  default application identity still returned decrypted `null`.
+- Web requests use `App-Name: eufy_security`, `Model_type: WEB`, `Web-Country`,
+  the existing account token/gtoken, and ECDH encryption/signature headers.
+  Changing the SDK request's application identity returned HTTP 401.
+  Exchanging a key using that identity returned HTTP 403. Reproducing the
+  public portal's separate bootstrap protocol also returned HTTP 403, including
+  with its exact exchange header shape and ordinary web-origin headers. The
+  reason for rejection is **unconfirmed**; this does not prove token expiry,
+  lack of a subscription, or unavailable recordings. No login was attempted.
+- For applicable encrypted cloud records, the portal decodes `extra` and sends
+  `POST /v3/web/cipher/dec_aes_keys` with `user_id` and a `cipher_keys` array.
+  Each entry contains `cipher_id` and `aes_keys: { uuid, [uuid]: extra.aes_key }`.
+  It selects the returned key by cipher ID and UUID. The portal then fetches
+  `cloud_path` and processes versioned frame wrappers before muxing video and
+  audio to MP4. Its cloud path is not generally a directly playable MP4.
+- Another branch refreshes `cloud_path` using
+  `POST /v3/event/app/get_kvs_urls` with `monitor_ids` and `user_id`.
+  Neither key endpoint nor any video URL was called: no event record was
+  available. Concrete download hosts and successful media decryption remain
+  unconfirmed. The draft's restricted unencrypted downloader does not implement
+  this encrypted playback path.
+
+A read-only local calendar probe was prepared from the reference's
+`CMD_DATABASE_QUERY_BY_DATE` (10006), nested under database command 1306,
+for `history_record_info`, configured-device scope, and a five-record cap.
+Two attempts used the **running bridge's existing `media.exclusive` lock**.
+Both failed while opening the P2P session, before `queryDatabase` was reached;
+no recording database reply was received. The first had a 20-second cap; the
+second had a 35-second cap and returned an SDK error before that cap. Its exact
+cause was not retained, so it must not be described as a proven network timeout
+or unsupported database command. No live stream or settings command was issued
+by the probes. The cached battery subsequently read 18%, not charging.
+
+### Diagnostic incident
+
+A temporary, loopback-only Node debugger was used to schedule those probes
+inside the existing lock. Its cleanup attempted a dynamic `import` in the
+inspector evaluation context. Node rejected that with
+`ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING`; the unhandled rejection caused three
+bridge restarts, including the preliminary scope check. Railway restarted the
+service and it returned to authenticated/ready state. The debugger was confirmed
+closed. This method was stopped and must not be reused. No session file was
+copied or printed, no feature flag was enabled, and no feature build was deployed.
+The saved session was reused by normal bridge startup; no new login was requested
+by the probe. These restarts were an operational side effect, not a successful
+validation and not an intentional deployment.
+
+The follow-up still does **not** meet the real-recording acceptance criteria.
+The next missing evidence is the successful app's list/playback request sequence
+for this camera. No claim that cloud videos are accessible is justified.
 
 ## Consumer changes requiring a separate decision
 
