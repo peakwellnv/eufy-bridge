@@ -24,5 +24,13 @@ test('real MP4 decoding accepts bounded video and rejects false signatures and t
 
 test('reject audio-only, excessive frame rate, and excessive duration', async () => {
   for (const options of [{ audioOnly: true }, { rate: 121 }, { seconds: 22 }])
-    await assert.rejects(validateRecordingMp4(clip(options)), /1–120 fps video|bounded decodable video/);
+    await assert.rejects(validateRecordingMp4(clip(options)), /1–120 fps video|bounded decodable video|duration bound/);
+});
+
+// Keep every decoded frame: no trimming or increased frame-count tolerance.
+test('accepts fractional media duration of a nominal 20-second event', async () => {
+  const bytes = clip({ seconds: 20.6 });
+  assert.deepEqual(await validateRecordingMp4(bytes, { expectedFrames: 309 }), bytes);
+  await assert.rejects(validateRecordingMp4(bytes, { expectedFrames: 310 }), /every saved video frame/);
+  await assert.rejects(validateRecordingMp4(clip({ seconds: 21.2 })), /duration bound/);
 });
