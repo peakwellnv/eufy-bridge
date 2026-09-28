@@ -6,7 +6,9 @@ import { MediaError } from './media.js';
 
 // Strictly below the consumer's 25 MiB ceiling, including the container.
 export const RECORDING_MAX_BYTES = 25 * 1024 * 1024;
-const MAX_SECONDS = 20.5;
+// Camera calendar boundaries have whole-second precision. A nominal 20-second
+// event can decode longer than 20.5 seconds; retain every frame within 21 seconds.
+const MAX_SECONDS = 21;
 
 export function checkRecordingBytes(bytes) {
   if (!Buffer.isBuffer(bytes) || bytes.length < 12)
@@ -61,11 +63,13 @@ export async function validateRecordingMp4(bytes, { expectedFrames } = {}) {
     const rate = /^(\d+)\/(\d+)$/.exec(video?.avg_frame_rate ?? '');
     const fps = rate ? Number(rate[1]) / Number(rate[2]) : NaN;
     const duration = Number(probe.format?.duration);
+    if (Number.isFinite(duration) && duration > MAX_SECONDS)
+      throw new MediaError(`Recording exceeds the 21-second duration bound (${duration.toFixed(3)}s)`, 413);
     if (!video || !Number.isFinite(fps) || fps < 1 || fps > 120 ||
         !Number.isFinite(duration) || duration <= 0 || duration > MAX_SECONDS ||
         !Number.isInteger(video.width) || !Number.isInteger(video.height) ||
         video.width <= 0 || video.height <= 0 || video.width * video.height > 3840 * 2160)
-      throw new MediaError('Recording must contain 1–120 fps video of at most 20 seconds');
+      throw new MediaError('Recording must contain 1–120 fps video of at most 21 seconds');
     const progress = await run(process.env.FFMPEG_PATH || 'ffmpeg', [
       '-nostdin', '-hide_banner', '-loglevel', 'error', '-xerror', '-err_detect', 'explode',
       ...input, '-i', file, '-map', '0:v:0', '-an', '-progress', 'pipe:1', '-nostats', '-f', 'null', '-',

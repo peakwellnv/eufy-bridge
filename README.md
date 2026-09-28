@@ -108,3 +108,7 @@ clip 413, list rate limit 429, unsupported format 501, failed transfer 502,
 and timeout 504. Upstream paths, IDs, account data and keys are never returned.
 See [recordings research](docs/RECORDINGS_RESEARCH.md) for protocol evidence,
 limitations, historical diagnostics, and deployment status.
+
+Saved recordings retain every frame with a 21-second decoded-media ceiling for
+nominal 20-second events (calendar timestamps have whole-second precision).
+Longer media remains rejected; the strict 25 MiB and exact-frame-count checks remain.
