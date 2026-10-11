@@ -10,6 +10,7 @@ import { whatsappVideo } from "./whatsapp-video.js";
 import { SpeechLedger } from "./speech-ledger.js";
 import { installCellularRelay } from "./cellular-relay.js";
 import { Recordings } from "./recordings.js";
+import { continuousPowerConfirmed } from "./power.js";
 import { mountRecordings } from "./recordings-routes.js";
 import { MediaError } from "./media.js";
 if (["true", "experimental"].includes(process.env.EUFY_CELLULAR_RELAY)) installCellularRelay();
@@ -186,8 +187,8 @@ app.get("/power-status", async (req, res) => {
     res.json({ checkedAt: new Date().toISOString(), battery: battery?.level ?? null,
       charging: battery?.charging ?? null, configuredSource: battery?.powerSource ?? null,
       solarIntensity: battery?.solarIntensity ?? null, solarConnected24h: battery?.solarConnected24h ?? null,
-      continuousPowerConfirmed: false, policy: "five-minute-checks",
-      note: "Cached device facts. Charging does not prove continuous mains power on this battery camera." });
+      continuousPowerConfirmed: continuousPowerConfirmed(process.env, battery), policy: "five-minute-checks",
+      note: "Cached device facts. Continuous power is confirmed only by the owner (EUFY_CONTINUOUS_POWER=owner-confirmed) and is withdrawn when the camera reports not charging." });
   } catch (e) { res.status(502).json({ error: "Power status unavailable" }); }
 });
 
